@@ -420,13 +420,12 @@ function ComingSoon({ kind, onBack }) {
 
 /* ────────────────────── REGISTRATION ────────────────────── */
 
-const TOTAL_STEPS = 8; // step 0 is the auth+invite gate
+const TOTAL_STEPS = 8; // step 0 is the Discord auth gate
 
 function Registration({ authToken, discordIdentity, onBack, onComplete }) {
   // Start at step 0 if not yet authenticated, otherwise step 1.
   const [step, setStep] = useState(authToken && discordIdentity ? 1 : 0);
   const [data, setData] = useState({
-    inviteCode: "",
     fullName: "",
     discordName: discordIdentity?.username || "",
     ign: "",
@@ -453,8 +452,8 @@ function Registration({ authToken, discordIdentity, onBack, onComplete }) {
   const stepIsValid = (() => {
     switch (step) {
       case 0:
-        // Both Discord auth AND invite code required to leave the gate
-        return !!authToken && !!discordIdentity && data.inviteCode.trim().length >= 4;
+        // Discord auth required to leave the gate
+        return !!authToken && !!discordIdentity;
       case 1:
         return (
           data.fullName.trim() &&
@@ -612,17 +611,17 @@ function StepAuthGate({ data, set, discordIdentity }) {
 
   return (
     <section>
-      <Ribbon text="STEP 0 OF 7 · ACCESS CHECK" />
+      <Ribbon text="STEP 0 OF 7 · SIGN IN" />
       <h2 className="font-display text-3xl sm:text-4xl mt-3 mb-2">
-        Verify your access.
+        Sign in to register.
       </h2>
       <p className="font-body text-[#c8c2b3] mb-8">
-        The Lattice Open is invite-only. Sign in with Discord and enter the
-        invite code that was DM'd to you. Both are required to continue.
+        We use Discord to verify you're a real human and to set up your team
+        chat after registration. One click, no extra accounts.
       </p>
 
       {/* Discord auth ─────────────────────────────────── */}
-      <div className="border-2 border-[#5865F2]/40 bg-[#131a2a] p-6 mb-5">
+      <div className="border-2 border-[#5865F2]/40 bg-[#131a2a] p-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-[#5865F2] rounded-full flex items-center justify-center">
@@ -664,38 +663,13 @@ function StepAuthGate({ data, set, discordIdentity }) {
         )}
       </div>
 
-      {/* Invite code ─────────────────────────────────── */}
-      <div className="border-2 border-yellow-400/40 bg-[#131a2a] p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 bg-yellow-400 flex items-center justify-center">
-            <Lock className="w-5 h-5 text-black" strokeWidth={2.5} />
-          </div>
-          <div>
-            <h3 className="font-display text-lg">Invite Code</h3>
-            <p className="font-mono text-[10px] text-[#c8c2b3]">REQUIRED · 8 CHARACTERS</p>
-          </div>
-        </div>
-
-        <input
-          type="text"
-          value={data.inviteCode}
-          onChange={(e) => set({ inviteCode: e.target.value.toUpperCase() })}
-          placeholder="ABCD1234"
-          maxLength={8}
-          className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-yellow-300 px-4 py-3 font-mono text-lg tracking-[0.3em] text-center focus:outline-none focus:border-yellow-400 transition-colors placeholder:text-[#6b7280]/50"
-        />
-        <p className="font-mono text-[10px] text-[#6b7280] mt-2 text-center">
-          Code is single-use and verified against the master invite list when you submit.
-        </p>
-      </div>
-
       <div className="mt-6 border-l-4 border-yellow-400/60 bg-yellow-400/5 p-4">
         <div className="flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
           <p className="font-body text-xs text-[#c8c2b3] leading-relaxed">
-            <strong className="text-yellow-300">Don't have an invite?</strong>{" "}
-            Reach out to a Tournament Organizer in the official Major Mayhem Discord.
-            Codes are issued to confirmed players only.
+            <strong className="text-yellow-300">First time?</strong>{" "}
+            You'll be redirected to Discord to authorize the Lattice Open app.
+            We only request your username — no DMs, no server access, nothing else.
           </p>
         </div>
       </div>
@@ -1112,7 +1086,7 @@ function StepPayment({ data, authToken, onSuccess }) {
    * Full submission flow:
    *   1. POST registration + auth JWT + Turnstile token to /api/submit
    *   2. Vercel function verifies JWT, forwards to Sheets webhook
-   *   3. Sheets webhook verifies Turnstile, validates invite, appends row
+   *   3. Sheets webhook verifies Turnstile, appends row
    *   4. Mock PayPal handoff (real PayPal swaps in here later)
    */
   const handlePay = async () => {
@@ -1208,7 +1182,6 @@ function StepPayment({ data, authToken, onSuccess }) {
           <Row k="IGN" v={data.ign} />
           <Row k="Rank" v={data.rank} />
           <Row k="Servers" v={data.servers.join(", ")} />
-          <Row k="Invite" v={data.inviteCode} />
         </div>
       </div>
 
@@ -1266,7 +1239,7 @@ function StepPayment({ data, authToken, onSuccess }) {
       <div className="mt-8 border-l-4 border-yellow-400/60 bg-yellow-400/5 p-4 font-mono text-[11px] text-[#c8c2b3] leading-relaxed">
         DEV NOTE: submission flows through <code className="text-yellow-300">/api/submit</code>{" "}
         which verifies the Discord JWT and forwards to Apps Script (which then
-        verifies Turnstile + invite code). PayPal is mocked — swap in{" "}
+        verifies Turnstile). PayPal is mocked — swap in{" "}
         <code className="text-yellow-300">@paypal/react-paypal-js</code> when ready.
       </div>
     </section>
