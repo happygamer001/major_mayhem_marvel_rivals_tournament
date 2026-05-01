@@ -17,7 +17,6 @@ import {
   Lock,
   ShieldCheck,
 } from "lucide-react";
-import { submitRegistration } from "./submitRegistration";
 
 /* ──────────────────────────────────────────────────────────────
    LATTICE OPEN TOURNAMENT — Major Mayhem
@@ -150,13 +149,56 @@ const BROADCAST_TOS = {
   ],
 };
 
-const ENTRY_FEE_USD = 30; // per team — adjustable
+const PER_MEMBER_FEE_USD = 5; // entry fee = teamSize × $5
+
+/**
+ * Compute the entry fee based on team composition.
+ *   solo        → 1 × $5 = $5
+ *   partial     → partialMemberCount × $5 (2–5)
+ *   full        → 6 × $5 = $30
+ */
+function computeFee({ teamType, partialMemberCount }) {
+  const seats =
+    teamType === "solo"
+      ? 1
+      : teamType === "full"
+      ? 6
+      : teamType === "partial"
+      ? Number(partialMemberCount) || 0
+      : 0;
+  return { seats, total: seats * PER_MEMBER_FEE_USD };
+}
 
 /* ────────────────────── ROOT ────────────────────── */
 
 export default function App() {
   const [view, setView] = useState("landing"); // landing | register | brackets | leaderboards | streamers
   const [submitted, setSubmitted] = useState(null);
+  const [authToken, setAuthToken] = useState(null);
+  const [discordIdentity, setDiscordIdentity] = useState(null); // { id, username }
+
+  // Pick up auth token after Discord OAuth callback redirects us back here.
+  // The callback redirects to /?auth=<jwt>#/register — we read the token,
+  // strip it from the URL, decode the (unverified-here) payload to display
+  // the username, and jump straight into registration.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("auth");
+    if (token) {
+      setAuthToken(token);
+      // Decode without verifying — we only show the username. The server
+      // re-verifies the JWT on submission, so client trust isn't an issue.
+      try {
+        const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+        setDiscordIdentity({ id: payload.sub, username: payload.global_name || payload.username });
+      } catch (e) {
+        console.error("Could not decode auth token:", e);
+      }
+      // Clean the URL — remove ?auth=... and any hash
+      window.history.replaceState({}, "", window.location.pathname);
+      setView("register");
+    }
+  }, []);
 
   return (
     <div className="font-body min-h-screen w-full bg-[#0a0e1a] text-[#f5f1e8] relative overflow-hidden">
@@ -170,6 +212,8 @@ export default function App() {
         {view === "landing" && <Landing onPick={(v) => setView(v)} />}
         {view === "register" && (
           <Registration
+            authToken={authToken}
+            discordIdentity={discordIdentity}
             onBack={() => setView("landing")}
             onComplete={(data) => {
               setSubmitted(data);
@@ -291,7 +335,7 @@ function Landing({ onPick }) {
             16 TEAMS
           </span>
           <span className="px-3 py-1 border border-[#f5f1e8]/20 text-[#c8c2b3]">
-            ${ENTRY_FEE_USD} / TEAM ENTRY
+            ${PER_MEMBER_FEE_USD} / PLAYER
           </span>
         </div>
       </header>
@@ -376,13 +420,15 @@ function ComingSoon({ kind, onBack }) {
 
 /* ────────────────────── REGISTRATION ────────────────────── */
 
-const TOTAL_STEPS = 7;
+const TOTAL_STEPS = 8; // step 0 is the auth+invite gate
 
-function Registration({ onBack, onComplete }) {
-  const [step, setStep] = useState(1);
+function Registration({ authToken, discordIdentity, onBack, onComplete }) {
+  // Start at step 0 if not yet authenticated, otherwise step 1.
+  const [step, setStep] = useState(authToken && discordIdentity ? 1 : 0);
   const [data, setData] = useState({
+    inviteCode: "",
     fullName: "",
-    discordName: "",
+    discordName: discordIdentity?.username || "",
     ign: "",
     rank: "",
     servers: [],
@@ -390,6 +436,7 @@ function Registration({ onBack, onComplete }) {
     agreedDiscordTOS: false,
     agreedTournamentTOS: false,
     teamType: "", // 'solo' | 'partial' | 'full'
+    partialMemberCount: "", // only used when teamType === 'partial' (2-5)
     agreedRPMA: false,
     confirmedCaptain: false,
     acknowledgedCaptainResponsibility: false,
@@ -402,10 +449,12 @@ function Registration({ onBack, onComplete }) {
   const isFullTeam = data.teamType === "full";
   const isIncomplete = data.teamType === "solo" || data.teamType === "partial";
 
-  // Step 5 is the conditional branch — render either RPMA or Captain, but it
-  // counts as a single step in the progress bar either way.
+  // Step 0 = auth gate. Steps 1-7 are the original 7 steps.
   const stepIsValid = (() => {
     switch (step) {
+      case 0:
+        // Both Discord auth AND invite code required to leave the gate
+        return !!authToken && !!discordIdentity && data.inviteCode.trim().length >= 4;
       case 1:
         return (
           data.fullName.trim() &&
@@ -419,7 +468,12 @@ function Registration({ onBack, onComplete }) {
       case 3:
         return data.agreedTournamentTOS;
       case 4:
-        return data.teamType !== "";
+        if (data.teamType === "") return false;
+        if (data.teamType === "partial") {
+          const n = Number(data.partialMemberCount);
+          return n >= 2 && n <= 5;
+        }
+        return true;
       case 5:
         if (isIncomplete) return data.agreedRPMA;
         if (isFullTeam)
@@ -438,16 +492,23 @@ function Registration({ onBack, onComplete }) {
     }
   })();
 
-  const next = () => stepIsValid && setStep((s) => Math.min(s + 1, TOTAL_STEPS));
-  const prev = () => (step === 1 ? onBack() : setStep((s) => s - 1));
+  const next = () => stepIsValid && setStep((s) => Math.min(s + 1, 7));
+  const prev = () => (step === 0 ? onBack() : setStep((s) => s - 1));
 
   return (
     <main className="max-w-3xl mx-auto px-6 sm:px-10 pt-16 pb-24">
-      <BackButton onClick={prev} label={step === 1 ? "Back to home" : "Previous step"} />
-      <ProgressBar step={step} total={TOTAL_STEPS} />
+      <BackButton onClick={prev} label={step === 0 ? "Back to home" : "Previous step"} />
+      <ProgressBar step={step} total={7} />
 
       <div className="mt-8 slide-up" key={step}>
-        {step === 1 && <StepBasicInfo data={data} set={set} />}
+        {step === 0 && (
+          <StepAuthGate
+            data={data}
+            set={set}
+            discordIdentity={discordIdentity}
+          />
+        )}
+        {step === 1 && <StepBasicInfo data={data} set={set} discordIdentity={discordIdentity} />}
         {step === 2 && (
           <StepTOS
             tos={DISCORD_TOS}
@@ -493,6 +554,7 @@ function Registration({ onBack, onComplete }) {
         {step === 7 && (
           <StepPayment
             data={data}
+            authToken={authToken}
             onSuccess={() => onComplete(data)}
           />
         )}
@@ -504,7 +566,7 @@ function Registration({ onBack, onComplete }) {
             onClick={prev}
             className="font-mono text-sm text-[#c8c2b3] hover:text-yellow-400 flex items-center gap-1.5"
           >
-            <ChevronLeft className="w-4 h-4" /> {step === 1 ? "BACK" : "PREVIOUS"}
+            <ChevronLeft className="w-4 h-4" /> {step === 0 ? "BACK" : "PREVIOUS"}
           </button>
           <button
             onClick={next}
@@ -540,6 +602,107 @@ function ProgressBar({ step, total }) {
   );
 }
 
+/* ────────────────────── STEP 0: AUTH GATE ────────────────────── */
+
+function StepAuthGate({ data, set, discordIdentity }) {
+  const handleDiscordSignIn = () => {
+    // Hard nav — Vercel serverless function will redirect to Discord.
+    window.location.href = "/api/discord/auth";
+  };
+
+  return (
+    <section>
+      <Ribbon text="STEP 0 OF 7 · ACCESS CHECK" />
+      <h2 className="font-display text-3xl sm:text-4xl mt-3 mb-2">
+        Verify your access.
+      </h2>
+      <p className="font-body text-[#c8c2b3] mb-8">
+        The Lattice Open is invite-only. Sign in with Discord and enter the
+        invite code that was DM'd to you. Both are required to continue.
+      </p>
+
+      {/* Discord auth ─────────────────────────────────── */}
+      <div className="border-2 border-[#5865F2]/40 bg-[#131a2a] p-6 mb-5">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-[#5865F2] rounded-full flex items-center justify-center">
+              <svg viewBox="0 0 71 55" fill="white" className="w-5 h-5">
+                <path d="M60.1 4.9A58.5 58.5 0 0045.9.5l-.7 1.4a54 54 0 00-19.5 0L25 .5a58.5 58.5 0 00-14.2 4.4C1.7 17.7-.7 30.2.4 42.4a58.9 58.9 0 0017.7 9 43.7 43.7 0 003.8-6.1 38 38 0 01-6-2.9c.5-.4 1-.8 1.5-1.1a42 42 0 0036.2 0c.5.3 1 .7 1.5 1.1-1.9 1.1-3.9 2.1-6 2.9a43.7 43.7 0 003.8 6.1 58.9 58.9 0 0017.7-9c1.5-14.2-2.4-26.6-10.5-37.5zM23.7 35.4c-3.5 0-6.4-3.2-6.4-7.2s2.8-7.3 6.4-7.3 6.4 3.2 6.4 7.3-2.8 7.2-6.4 7.2zm23.6 0c-3.5 0-6.4-3.2-6.4-7.2s2.8-7.3 6.4-7.3 6.4 3.2 6.4 7.3-2.8 7.2-6.4 7.2z" />
+              </svg>
+            </div>
+            <div>
+              <h3 className="font-display text-lg">Discord Sign-In</h3>
+              <p className="font-mono text-[10px] text-[#c8c2b3]">REQUIRED</p>
+            </div>
+          </div>
+          {discordIdentity ? (
+            <div className="flex items-center gap-2 text-[#86efac]">
+              <Check className="w-5 h-5" strokeWidth={3} />
+              <span className="font-mono text-xs">VERIFIED</span>
+            </div>
+          ) : (
+            <span className="font-mono text-xs text-[#fbbf24]">NEEDED</span>
+          )}
+        </div>
+
+        {discordIdentity ? (
+          <div className="bg-[#0a0e1a] border border-[#86efac]/30 p-3">
+            <p className="font-body text-sm text-[#f5f1e8]">
+              Signed in as{" "}
+              <span className="font-mono text-yellow-300">
+                @{discordIdentity.username}
+              </span>
+            </p>
+          </div>
+        ) : (
+          <button
+            onClick={handleDiscordSignIn}
+            className="w-full bg-[#5865F2] hover:bg-[#4752c4] text-white font-display py-3 px-4 transition-colors flex items-center justify-center gap-2"
+          >
+            SIGN IN WITH DISCORD
+          </button>
+        )}
+      </div>
+
+      {/* Invite code ─────────────────────────────────── */}
+      <div className="border-2 border-yellow-400/40 bg-[#131a2a] p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-yellow-400 flex items-center justify-center">
+            <Lock className="w-5 h-5 text-black" strokeWidth={2.5} />
+          </div>
+          <div>
+            <h3 className="font-display text-lg">Invite Code</h3>
+            <p className="font-mono text-[10px] text-[#c8c2b3]">REQUIRED · 8 CHARACTERS</p>
+          </div>
+        </div>
+
+        <input
+          type="text"
+          value={data.inviteCode}
+          onChange={(e) => set({ inviteCode: e.target.value.toUpperCase() })}
+          placeholder="ABCD1234"
+          maxLength={8}
+          className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-yellow-300 px-4 py-3 font-mono text-lg tracking-[0.3em] text-center focus:outline-none focus:border-yellow-400 transition-colors placeholder:text-[#6b7280]/50"
+        />
+        <p className="font-mono text-[10px] text-[#6b7280] mt-2 text-center">
+          Code is single-use and verified against the master invite list when you submit.
+        </p>
+      </div>
+
+      <div className="mt-6 border-l-4 border-yellow-400/60 bg-yellow-400/5 p-4">
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
+          <p className="font-body text-xs text-[#c8c2b3] leading-relaxed">
+            <strong className="text-yellow-300">Don't have an invite?</strong>{" "}
+            Reach out to a Tournament Organizer in the official Major Mayhem Discord.
+            Codes are issued to confirmed players only.
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function BackButton({ onClick, label = "Back" }) {
   return (
     <button
@@ -553,7 +716,7 @@ function BackButton({ onClick, label = "Back" }) {
 
 /* ────────────────────── STEP 1: BASIC INFO ────────────────────── */
 
-function StepBasicInfo({ data, set }) {
+function StepBasicInfo({ data, set, discordIdentity }) {
   const toggleServer = (s) =>
     set({
       servers: data.servers.includes(s)
@@ -579,14 +742,11 @@ function StepBasicInfo({ data, set }) {
             className={inputClass}
           />
         </Field>
-        <Field label="Discord Username" required hint="e.g. spideysense_24">
-          <input
-            type="text"
-            value={data.discordName}
-            onChange={(e) => set({ discordName: e.target.value })}
-            placeholder="username"
-            className={inputClass}
-          />
+        <Field label="Discord Username" required hint="locked from sign-in">
+          <div className="w-full bg-[#0a0e1a]/50 border-2 border-[#86efac]/30 text-[#86efac] px-3 py-2.5 font-mono text-sm flex items-center justify-between">
+            <span>@{discordIdentity?.username || data.discordName}</span>
+            <Check className="w-4 h-4" strokeWidth={3} />
+          </div>
         </Field>
         <Field label="In-Game Name (IGN)" required>
           <input
@@ -615,6 +775,7 @@ function StepBasicInfo({ data, set }) {
 
       <div className="mt-6">
         <Field
+          as="div"
           label="Servers You Typically Play On"
           required
           hint="Pick all that apply"
@@ -727,6 +888,55 @@ function StepTeamType({ data, set }) {
           );
         })}
       </div>
+
+      {/* Partial-team size picker — only shows when "Partial" is selected */}
+      {data.teamType === "partial" && (
+        <div className="mt-6 border-2 border-yellow-400/50 bg-yellow-400/5 p-5 slide-up">
+          <Field
+            as="div"
+            label="How many in your stack?"
+            required
+            hint="2 to 5 players"
+          >
+            <div className="flex flex-wrap gap-2 mt-1">
+              {[2, 3, 4, 5].map((n) => {
+                const active = Number(data.partialMemberCount) === n;
+                return (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => set({ partialMemberCount: n })}
+                    className={`font-display text-lg w-14 h-14 border-2 transition-colors ${
+                      active
+                        ? "bg-yellow-400 border-yellow-400 text-black"
+                        : "bg-transparent border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400/60"
+                    }`}
+                  >
+                    {n}
+                  </button>
+                );
+              })}
+            </div>
+          </Field>
+        </div>
+      )}
+
+      {/* Live fee preview */}
+      {data.teamType && (data.teamType !== "partial" || data.partialMemberCount) && (
+        <div className="mt-6 flex items-center justify-between border-l-4 border-yellow-400 bg-[#131a2a] px-5 py-4">
+          <div>
+            <div className="font-mono text-[10px] text-[#c8c2b3] tracking-widest mb-0.5">
+              ENTRY FEE PREVIEW
+            </div>
+            <div className="font-body text-sm text-[#f5f1e8]">
+              {computeFee(data).seats} {computeFee(data).seats === 1 ? "player" : "players"} × ${PER_MEMBER_FEE_USD}
+            </div>
+          </div>
+          <div className="font-display text-2xl text-yellow-400">
+            ${computeFee(data).total}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -863,31 +1073,90 @@ function StepTOS({ tos, agreed, onChange, ribbon, heading, subhead }) {
 
 /* ────────────────────── STEP 7: PAYMENT ────────────────────── */
 
-function StepPayment({ data, onSuccess }) {
-  const [status, setStatus] = useState("idle"); // idle | redirecting | success | error
+function StepPayment({ data, authToken, onSuccess }) {
+  const [status, setStatus] = useState("idle"); // idle | submitting | redirecting | success | error
+  const [errorMsg, setErrorMsg] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState(null);
+  const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
   const isFullTeam = data.teamType === "full";
 
-  // PLACEHOLDER PAYPAL HANDOFF
-  // In production this should POST registration to your backend, get back a
-  // PayPal order ID, then either redirect to PayPal or render the official
-  // PayPal Buttons (https://developer.paypal.com/sdk/js/).
-  //
-  // Right now: simulates a 1.4s PayPal redirect, then logs the registration
-  // to the Google Sheet via Apps Script (see submitRegistration.js).
-  const handlePay = async () => {
-    setStatus("redirecting");
-    await new Promise((r) => setTimeout(r, 1400));
+  // Load Cloudflare Turnstile script and render the widget.
+  useEffect(() => {
+    if (!turnstileSiteKey) return;
+    const scriptId = "cf-turnstile-script";
+    const renderWidget = () => {
+      if (window.turnstile) {
+        window.turnstile.render("#cf-turnstile-container", {
+          sitekey: turnstileSiteKey,
+          theme: "dark",
+          callback: (token) => setTurnstileToken(token),
+          "error-callback": () => setTurnstileToken(null),
+          "expired-callback": () => setTurnstileToken(null),
+        });
+      }
+    };
+    if (document.getElementById(scriptId)) {
+      renderWidget();
+      return;
+    }
+    const s = document.createElement("script");
+    s.id = scriptId;
+    s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js";
+    s.async = true;
+    s.defer = true;
+    s.onload = renderWidget;
+    document.head.appendChild(s);
+  }, [turnstileSiteKey]);
 
-    // Log registration to Google Sheet. Failure here doesn't block success —
-    // worst case the organizer reconciles from PayPal records.
-    const result = await submitRegistration({
-      ...data,
-      paymentStatus: "paid_mock", // change to "paid" once real PayPal is wired
-    });
-    if (!result.ok) {
-      console.warn("Sheet submission failed but continuing:", result.error);
+  /**
+   * Full submission flow:
+   *   1. POST registration + auth JWT + Turnstile token to /api/submit
+   *   2. Vercel function verifies JWT, forwards to Sheets webhook
+   *   3. Sheets webhook verifies Turnstile, validates invite, appends row
+   *   4. Mock PayPal handoff (real PayPal swaps in here later)
+   */
+  const handlePay = async () => {
+    setErrorMsg("");
+    if (!turnstileToken) {
+      setErrorMsg("Please complete the security check.");
+      return;
+    }
+    if (!authToken) {
+      setErrorMsg("Discord session expired. Please sign in again.");
+      return;
     }
 
+    setStatus("submitting");
+    try {
+      const res = await fetch("/api/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...data,
+          authToken,
+          turnstileToken,
+          paymentStatus: "Paid",
+          submittedAt: new Date().toISOString(),
+        }),
+      });
+      const result = await res.json();
+      if (!result.ok) {
+        setStatus("error");
+        setErrorMsg(result.error || "Registration failed.");
+        // Reset Turnstile so they can retry
+        if (window.turnstile) window.turnstile.reset();
+        setTurnstileToken(null);
+        return;
+      }
+    } catch (err) {
+      setStatus("error");
+      setErrorMsg("Network error. Please check your connection and try again.");
+      return;
+    }
+
+    // Mock PayPal handoff
+    setStatus("redirecting");
+    await new Promise((r) => setTimeout(r, 1400));
     setStatus("success");
     setTimeout(onSuccess, 1100);
   };
@@ -907,36 +1176,75 @@ function StepPayment({ data, onSuccess }) {
             <div className="font-mono text-xs text-[#c8c2b3] mb-1">REGISTRATION TYPE</div>
             <div className="font-display text-xl">
               {data.teamType === "solo" && "Solo Player"}
-              {data.teamType === "partial" && "Partial Team (2–5)"}
+              {data.teamType === "partial" &&
+                `Partial Team — ${data.partialMemberCount} player${
+                  Number(data.partialMemberCount) === 1 ? "" : "s"
+                }`}
               {data.teamType === "full" && `Full Team — ${data.teamName}`}
             </div>
           </div>
           <div className="text-right">
             <div className="font-mono text-xs text-[#c8c2b3] mb-1">TOTAL</div>
-            <div className="font-display text-3xl text-yellow-400">${ENTRY_FEE_USD}</div>
+            <div className="font-display text-3xl text-yellow-400">
+              ${computeFee(data).total}
+            </div>
           </div>
         </div>
+
+        {/* Fee breakdown */}
+        <div className="mb-4 pb-4 border-b border-[#f5f1e8]/10 flex justify-between items-baseline font-mono text-xs">
+          <span className="text-[#c8c2b3]">
+            {computeFee(data).seats}{" "}
+            {computeFee(data).seats === 1 ? "player" : "players"} × ${PER_MEMBER_FEE_USD}
+          </span>
+          <span className="text-yellow-300">
+            = ${computeFee(data).total}
+          </span>
+        </div>
+
         <div className="space-y-2 font-body text-sm text-[#c8c2b3]">
           <Row k="Player" v={data.fullName} />
           <Row k="Discord" v={data.discordName} />
           <Row k="IGN" v={data.ign} />
           <Row k="Rank" v={data.rank} />
           <Row k="Servers" v={data.servers.join(", ")} />
+          <Row k="Invite" v={data.inviteCode} />
         </div>
       </div>
 
+      {/* Cloudflare Turnstile widget */}
+      <div className="mb-5 flex justify-center">
+        <div id="cf-turnstile-container" />
+      </div>
+      {!turnstileSiteKey && (
+        <p className="font-mono text-[10px] text-[#fbbf24] text-center mb-3">
+          ⚠️ VITE_TURNSTILE_SITE_KEY not configured
+        </p>
+      )}
+
+      {errorMsg && (
+        <div className="mb-4 border-l-4 border-red-500 bg-red-500/10 p-3 font-body text-sm text-red-300">
+          {errorMsg}
+        </div>
+      )}
+
       <button
         onClick={handlePay}
-        disabled={status !== "idle"}
+        disabled={status === "submitting" || status === "redirecting" || status === "success"}
         className={`w-full font-display text-lg py-4 border-2 transition-all flex items-center justify-center gap-3 ${
-          status === "idle"
+          status === "idle" || status === "error"
             ? "bg-yellow-400 text-black border-yellow-400 hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_0_#ef4444] cursor-pointer"
             : "bg-[#131a2a] text-[#c8c2b3] border-[#c8c2b3] cursor-wait"
         }`}
       >
-        {status === "idle" && (
+        {(status === "idle" || status === "error") && (
           <>
-            <CreditCard className="w-5 h-5" /> PAY WITH PAYPAL · ${ENTRY_FEE_USD}
+            <CreditCard className="w-5 h-5" /> PAY WITH PAYPAL · ${computeFee(data).total}
+          </>
+        )}
+        {status === "submitting" && (
+          <>
+            <Lock className="w-5 h-5 animate-pulse" /> SAVING REGISTRATION…
           </>
         )}
         {status === "redirecting" && (
@@ -956,11 +1264,10 @@ function StepPayment({ data, onSuccess }) {
       </p>
 
       <div className="mt-8 border-l-4 border-yellow-400/60 bg-yellow-400/5 p-4 font-mono text-[11px] text-[#c8c2b3] leading-relaxed">
-        DEV NOTE: this button currently runs a mock PayPal handoff. Wire the
-        PayPal JS SDK <code className="text-yellow-300">@paypal/react-paypal-js</code>{" "}
-        in here, or POST to <code className="text-yellow-300">/api/register</code> →{" "}
-        <code className="text-yellow-300">/api/paypal/create-order</code> on the
-        backend before going live.
+        DEV NOTE: submission flows through <code className="text-yellow-300">/api/submit</code>{" "}
+        which verifies the Discord JWT and forwards to Apps Script (which then
+        verifies Turnstile + invite code). PayPal is mocked — swap in{" "}
+        <code className="text-yellow-300">@paypal/react-paypal-js</code> when ready.
       </div>
     </section>
   );
@@ -980,9 +1287,9 @@ function Row({ k, v }) {
 const inputClass =
   "w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2.5 font-body text-sm focus:outline-none focus:border-yellow-400 transition-colors placeholder:text-[#6b7280]";
 
-function Field({ label, required, hint, children }) {
+function Field({ label, required, hint, children, as: Wrapper = "label" }) {
   return (
-    <label className="block">
+    <Wrapper className="block">
       <div className="flex items-baseline justify-between mb-1.5">
         <span className="font-mono text-[11px] text-[#c8c2b3] tracking-widest uppercase">
           {label}
@@ -991,7 +1298,7 @@ function Field({ label, required, hint, children }) {
         {hint && <span className="font-mono text-[10px] text-[#6b7280]">{hint}</span>}
       </div>
       {children}
-    </label>
+    </Wrapper>
   );
 }
 
