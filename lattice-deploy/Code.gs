@@ -1,38 +1,23 @@
 /**
- * LATTICE OPEN — Registration webhook v2 (LOCKDOWN)
- * --------------------------------------------------
+ * LATTICE OPEN — Registration webhook v3 (DISCORD + TURNSTILE)
+ * -------------------------------------------------------------
  * Layers active in this version:
  *   1. Cloudflare Turnstile  → blocks bots
- *   2. Invite codes          → only pre-approved players can register
- *   3. Discord OAuth         → handled by Vercel serverless function (separate)
+ *   2. Discord OAuth         → handled by Vercel serverless function (separate)
  *
- * The frontend POSTs:
- *   {
- *     ...registrationFields,
- *     turnstileToken: "...",
- *     inviteCode: "ABC12345",
- *     discordId: "snowflake from OAuth",
- *     discordUsername: "verified handle from OAuth"
- *   }
- *
- * Apps Script:
- *   - verifies the Turnstile token with Cloudflare
- *   - looks up the invite code in the "Invites" tab
- *   - if both pass, appends the registration AND marks the invite as redeemed
+ * Layer 2 (invite codes) was removed. Anyone with a Discord account can
+ * register, subject to Turnstile + manual mod review of submissions.
  */
 
 /* ─────────────────────────── CONFIG ─────────────────────────── */
 
 const REG_SHEET = "Registrations";
-const INVITES_SHEET = "Invites";
 
-// Set this in: Apps Script editor → ⚙ Project Settings → Script Properties.
-// Key: TURNSTILE_SECRET_KEY  Value: (from Cloudflare dashboard)
-// We read it at runtime so the secret never lives in the source.
+// Turnstile secret lives in: Apps Script editor → ⚙ Project Settings →
+// Script Properties. Key: TURNSTILE_SECRET_KEY
 
 const REG_HEADERS = [
   "Timestamp",
-  "Invite Code",
   "Discord ID (OAuth)",
   "Discord Username (OAuth)",
   "Full Name",
@@ -56,22 +41,13 @@ const REG_HEADERS = [
   "Notes",
 ];
 
-const INVITE_HEADERS = [
-  "Code",
-  "Status",         // "Active" | "Redeemed" | "Revoked"
-  "Issued To",      // optional — name/Discord of the invited person
-  "Issued At",
-  "Redeemed At",
-  "Redeemed By IGN",
-];
-
 /* ─────────────────────────── ENTRYPOINTS ─────────────────────────── */
 
 function doGet(e) {
   return jsonResponse({
     ok: true,
     service: "lattice-open-registrations",
-    version: "v2-lockdown",
+    version: "v3-no-invites",
     message: "Endpoint live. POST registrations here.",
   });
 }
@@ -93,20 +69,9 @@ function doPost(e) {
       return jsonResponse({ ok: false, error: "Captcha verification failed." }, 403);
     }
 
-    // ─── Layer 2: Invite code ───
-    if (!data.inviteCode) {
-      return jsonResponse({ ok: false, error: "Invite code required." }, 400);
-    }
-    const inviteResult = validateAndRedeemInvite(data.inviteCode, data.ign);
-    if (!inviteResult.ok) {
-      return jsonResponse({ ok: false, error: inviteResult.error }, 403);
-    }
-
-    // ─── Layer 3: Discord OAuth (verified upstream by serverless fn) ───
-    // We trust discordId/discordUsername in the payload because the React app
-    // only ever has those values after a successful Discord OAuth round-trip
-    // through our Vercel /api/discord/* endpoints. Apps Script doesn't need
-    // to re-verify — it just records what came through.
+    // ─── Layer 2: Discord OAuth (verified upstream by serverless fn) ───
+    // The React app only ever has discordId/discordUsername after a successful
+    // Discord OAuth round-trip through our Vercel /api/discord/* endpoints.
     if (!data.discordId || !data.discordUsername) {
       return jsonResponse(
         { ok: false, error: "Discord identity not verified." },
@@ -131,7 +96,7 @@ function doPost(e) {
 
     Logger.log(
       "Registration recorded: " + data.fullName + " / " + data.ign +
-      " (Discord: " + data.discordUsername + ", code: " + data.inviteCode + ")"
+      " (Discord: " + data.discordUsername + ")"
     );
     return jsonResponse({ ok: true, message: "Registration recorded." });
   } catch (err) {
@@ -166,84 +131,6 @@ function verifyTurnstile(token) {
     Logger.log("Turnstile verification error: " + err.toString());
     return false;
   }
-}
-
-/* ─────────────────────────── LAYER 2: INVITE CODES ─────────────────────────── */
-
-/**
- * Atomically validate + redeem an invite code.
- * Uses LockService to prevent two parallel registrations from claiming the
- * same code (race condition).
- */
-function validateAndRedeemInvite(code, ign) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(10000); // up to 10s
-
-  try {
-    const sheet = getOrCreateSheet(INVITES_SHEET, INVITE_HEADERS);
-    const data = sheet.getDataRange().getValues();
-    const normalizedCode = String(code).trim().toUpperCase();
-
-    // Row 0 is headers — start at 1.
-    for (let i = 1; i < data.length; i++) {
-      if (String(data[i][0]).trim().toUpperCase() === normalizedCode) {
-        const status = data[i][1];
-        if (status === "Redeemed") {
-          return { ok: false, error: "This invite code has already been used." };
-        }
-        if (status === "Revoked") {
-          return { ok: false, error: "This invite code is no longer valid." };
-        }
-        if (status !== "Active") {
-          return { ok: false, error: "Invite code is in an unknown state." };
-        }
-
-        // Mark as redeemed — sheet rows are 1-indexed in the API.
-        const rowIndex = i + 1;
-        sheet.getRange(rowIndex, 2).setValue("Redeemed"); // Status
-        sheet.getRange(rowIndex, 5).setValue(new Date());  // Redeemed At
-        sheet.getRange(rowIndex, 6).setValue(ign || "");   // Redeemed By IGN
-        return { ok: true };
-      }
-    }
-
-    return { ok: false, error: "Invite code not found." };
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-/**
- * Run this from the Apps Script editor to mint a batch of invite codes.
- *   1. Open the editor
- *   2. Select "generateInviteCodes" from the function dropdown
- *   3. Click ▶ Run
- *   4. New codes appear in the Invites tab as "Active"
- */
-function generateInviteCodes() {
-  const COUNT = 20; // change as needed
-  const sheet = getOrCreateSheet(INVITES_SHEET, INVITE_HEADERS);
-  const rows = [];
-  for (let i = 0; i < COUNT; i++) {
-    rows.push([generateCode(), "Active", "", new Date(), "", ""]);
-  }
-  sheet
-    .getRange(sheet.getLastRow() + 1, 1, rows.length, INVITE_HEADERS.length)
-    .setValues(rows);
-  Logger.log("Generated " + COUNT + " invite codes.");
-  SpreadsheetApp.getUi().alert(
-    "Generated " + COUNT + " invite codes. Check the Invites tab."
-  );
-}
-
-function generateCode() {
-  // 8 chars, A-Z + 2-9 (no 0/O/1/I to avoid confusion when reading aloud).
-  const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "";
-  for (let i = 0; i < 8; i++) {
-    code += ALPHABET.charAt(Math.floor(Math.random() * ALPHABET.length));
-  }
-  return code;
 }
 
 /* ─────────────────────────── HELPERS ─────────────────────────── */
@@ -297,7 +184,6 @@ function buildRow(data) {
 
   return [
     new Date(),
-    data.inviteCode,
     data.discordId,
     data.discordUsername,
     data.fullName,
