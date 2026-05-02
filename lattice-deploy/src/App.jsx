@@ -1,5 +1,9 @@
 import { useState, useEffect } from "react";
 import {
+  PayPalScriptProvider,
+  PayPalButtons,
+} from "@paypal/react-paypal-js";
+import {
   ChevronLeft,
   ChevronRight,
   Check,
@@ -1048,11 +1052,14 @@ function StepTOS({ tos, agreed, onChange, ribbon, heading, subhead }) {
 /* ────────────────────── STEP 7: PAYMENT ────────────────────── */
 
 function StepPayment({ data, authToken, onSuccess }) {
-  const [status, setStatus] = useState("idle"); // idle | submitting | redirecting | success | error
+  const [status, setStatus] = useState("idle"); // idle | paying | submitting | success | error
   const [errorMsg, setErrorMsg] = useState("");
   const [turnstileToken, setTurnstileToken] = useState(null);
   const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
+  const paypalClientId = import.meta.env.VITE_PAYPAL_CLIENT_ID;
+  const paypalEnv = import.meta.env.VITE_PAYPAL_ENV || "sandbox";
   const isFullTeam = data.teamType === "full";
+  const fee = computeFee(data);
 
   // Load Cloudflare Turnstile script and render the widget.
   useEffect(() => {
@@ -1083,56 +1090,108 @@ function StepPayment({ data, authToken, onSuccess }) {
   }, [turnstileSiteKey]);
 
   /**
-   * Full submission flow:
-   *   1. POST registration + auth JWT + Turnstile token to /api/submit
-   *   2. Vercel function verifies JWT, forwards to Sheets webhook
-   *   3. Sheets webhook verifies Turnstile, appends row
-   *   4. Mock PayPal handoff (real PayPal swaps in here later)
+   * PayPal Buttons callbacks:
+   *   createOrder  → ask our server to create a PayPal order with the right $
+   *   onApprove    → user authorized; ask our server to capture the payment,
+   *                  then submit the registration to /api/submit
+   *   onCancel     → user closed the PayPal popup
+   *   onError      → SDK or network error
    */
-  const handlePay = async () => {
+
+  const createOrder = async () => {
     setErrorMsg("");
     if (!turnstileToken) {
-      setErrorMsg("Please complete the security check.");
-      return;
+      setErrorMsg("Please complete the security check first.");
+      throw new Error("Turnstile not completed");
     }
     if (!authToken) {
       setErrorMsg("Discord session expired. Please sign in again.");
-      return;
+      throw new Error("No auth token");
     }
+    setStatus("paying");
+    const res = await fetch("/api/paypal/create-order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        authToken,
+        teamType: data.teamType,
+        partialMemberCount: data.partialMemberCount,
+      }),
+    });
+    const result = await res.json();
+    if (!result.ok) {
+      setStatus("error");
+      setErrorMsg(result.error || "Could not start PayPal checkout.");
+      throw new Error(result.error || "create-order failed");
+    }
+    return result.orderId;
+  };
 
+  const onApprove = async (paypalData) => {
     setStatus("submitting");
     try {
-      const res = await fetch("/api/submit", {
+      // Step 1 — capture the payment server-side
+      const captureRes = await fetch("/api/paypal/capture-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          authToken,
+          orderId: paypalData.orderID,
+        }),
+      });
+      const captureResult = await captureRes.json();
+      if (!captureResult.ok) {
+        setStatus("error");
+        setErrorMsg(captureResult.error || "Could not capture payment.");
+        return;
+      }
+
+      // Step 2 — submit the registration with payment proof
+      const submitRes = await fetch("/api/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...data,
           authToken,
           turnstileToken,
-          paymentStatus: "Paid",
+          paypalOrderId: paypalData.orderID,
           submittedAt: new Date().toISOString(),
         }),
       });
-      const result = await res.json();
-      if (!result.ok) {
+      const submitResult = await submitRes.json();
+      if (!submitResult.ok) {
+        // Payment went through but registration didn't save — flag clearly
         setStatus("error");
-        setErrorMsg(result.error || "Registration failed.");
-        // Reset Turnstile so they can retry
-        if (window.turnstile) window.turnstile.reset();
-        setTurnstileToken(null);
+        setErrorMsg(
+          (submitResult.error || "Registration failed") +
+            ". Your payment was captured (Order " +
+            paypalData.orderID +
+            ") — please contact a Tournament Organizer with this ID for help."
+        );
         return;
       }
-    } catch (err) {
-      setStatus("error");
-      setErrorMsg("Network error. Please check your connection and try again.");
-      return;
-    }
 
-    // Mock PayPal handoff
-    setStatus("redirecting");
-    await new Promise((r) => setTimeout(r, 1400));
-    setStatus("success");
-    setTimeout(onSuccess, 1100);
+      setStatus("success");
+      setTimeout(onSuccess, 1500);
+    } catch (err) {
+      console.error("onApprove error:", err);
+      setStatus("error");
+      setErrorMsg(
+        "Network error after payment. If you were charged, contact a Tournament Organizer with PayPal Order ID: " +
+          paypalData.orderID
+      );
+    }
+  };
+
+  const onCancel = () => {
+    setStatus("idle");
+    setErrorMsg("Checkout cancelled. You can retry whenever you're ready.");
+  };
+
+  const onError = (err) => {
+    console.error("PayPal SDK error:", err);
+    setStatus("error");
+    setErrorMsg("PayPal couldn't load. Please refresh and try again.");
   };
 
   return (
@@ -1160,7 +1219,7 @@ function StepPayment({ data, authToken, onSuccess }) {
           <div className="text-right">
             <div className="font-mono text-xs text-[#c8c2b3] mb-1">TOTAL</div>
             <div className="font-display text-3xl text-yellow-400">
-              ${computeFee(data).total}
+              ${fee.total}
             </div>
           </div>
         </div>
@@ -1168,11 +1227,11 @@ function StepPayment({ data, authToken, onSuccess }) {
         {/* Fee breakdown */}
         <div className="mb-4 pb-4 border-b border-[#f5f1e8]/10 flex justify-between items-baseline font-mono text-xs">
           <span className="text-[#c8c2b3]">
-            {computeFee(data).seats}{" "}
-            {computeFee(data).seats === 1 ? "player" : "players"} × ${PER_MEMBER_FEE_USD}
+            {fee.seats}{" "}
+            {fee.seats === 1 ? "player" : "players"} × ${PER_MEMBER_FEE_USD}
           </span>
           <span className="text-yellow-300">
-            = ${computeFee(data).total}
+            = ${fee.total}
           </span>
         </div>
 
@@ -1201,47 +1260,72 @@ function StepPayment({ data, authToken, onSuccess }) {
         </div>
       )}
 
-      <button
-        onClick={handlePay}
-        disabled={status === "submitting" || status === "redirecting" || status === "success"}
-        className={`w-full font-display text-lg py-4 border-2 transition-all flex items-center justify-center gap-3 ${
-          status === "idle" || status === "error"
-            ? "bg-yellow-400 text-black border-yellow-400 hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_0_#ef4444] cursor-pointer"
-            : "bg-[#131a2a] text-[#c8c2b3] border-[#c8c2b3] cursor-wait"
-        }`}
-      >
-        {(status === "idle" || status === "error") && (
-          <>
-            <CreditCard className="w-5 h-5" /> PAY WITH PAYPAL · ${computeFee(data).total}
-          </>
-        )}
-        {status === "submitting" && (
-          <>
-            <Lock className="w-5 h-5 animate-pulse" /> SAVING REGISTRATION…
-          </>
-        )}
-        {status === "redirecting" && (
-          <>
-            <Lock className="w-5 h-5 animate-pulse" /> CONNECTING TO PAYPAL…
-          </>
-        )}
-        {status === "success" && (
-          <>
-            <Check className="w-5 h-5" /> REGISTRATION COMPLETE
-          </>
-        )}
-      </button>
+      {/* Status indicators above the PayPal button */}
+      {status === "submitting" && (
+        <div className="mb-4 border-l-4 border-yellow-400 bg-yellow-400/5 p-3 font-body text-sm text-yellow-200 flex items-center gap-2">
+          <Lock className="w-4 h-4 animate-pulse" />
+          Recording your registration…
+        </div>
+      )}
+      {status === "success" && (
+        <div className="mb-4 border-l-4 border-green-400 bg-green-400/10 p-3 font-body text-sm text-green-300 flex items-center gap-2">
+          <Check className="w-4 h-4" strokeWidth={3} />
+          Payment captured · Registration complete
+        </div>
+      )}
 
-      <p className="font-mono text-[10px] text-[#6b7280] mt-4 text-center">
+      {/* PayPal Buttons — only render when ready and not in a finalizing state */}
+      {paypalClientId && status !== "submitting" && status !== "success" && (
+        <div className={!turnstileToken ? "opacity-40 pointer-events-none" : ""}>
+          <PayPalScriptProvider
+            options={{
+              clientId: paypalClientId,
+              currency: "USD",
+              intent: "capture",
+              "enable-funding": "venmo,card",
+              environment: paypalEnv === "live" ? "production" : "sandbox",
+            }}
+          >
+            <PayPalButtons
+              style={{
+                layout: "vertical",
+                shape: "rect",
+                color: "gold",
+                label: "pay",
+                height: 48,
+              }}
+              disabled={!turnstileToken || status === "paying"}
+              forceReRender={[fee.total, turnstileToken]}
+              createOrder={createOrder}
+              onApprove={onApprove}
+              onCancel={onCancel}
+              onError={onError}
+            />
+          </PayPalScriptProvider>
+        </div>
+      )}
+
+      {!paypalClientId && (
+        <div className="border-2 border-dashed border-yellow-400/60 bg-yellow-400/5 p-4 text-center">
+          <p className="font-mono text-xs text-yellow-200">
+            ⚠️ VITE_PAYPAL_CLIENT_ID is not set. Add your PayPal Sandbox client
+            ID to Vercel env vars to enable checkout.
+          </p>
+        </div>
+      )}
+
+      {!turnstileToken && paypalClientId && (
+        <p className="font-mono text-[10px] text-[#fbbf24] text-center mt-3">
+          Complete the security check above to enable payment
+        </p>
+      )}
+
+      <p className="font-mono text-[10px] text-[#6b7280] mt-6 text-center">
         🔒 Payments processed securely via PayPal. We never see your card details.
+        {paypalEnv === "sandbox" && (
+          <> · <span className="text-yellow-300">SANDBOX MODE — no real money</span></>
+        )}
       </p>
-
-      <div className="mt-8 border-l-4 border-yellow-400/60 bg-yellow-400/5 p-4 font-mono text-[11px] text-[#c8c2b3] leading-relaxed">
-        DEV NOTE: submission flows through <code className="text-yellow-300">/api/submit</code>{" "}
-        which verifies the Discord JWT and forwards to Apps Script (which then
-        verifies Turnstile). PayPal is mocked — swap in{" "}
-        <code className="text-yellow-300">@paypal/react-paypal-js</code> when ready.
-      </div>
     </section>
   );
 }
