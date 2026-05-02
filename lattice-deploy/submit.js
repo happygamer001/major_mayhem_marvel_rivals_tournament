@@ -1,20 +1,17 @@
 /**
  * POST /api/submit
  *
- * The single place all registrations flow through. This function:
- *   1. Verifies the Discord auth JWT (proves the user actually went through OAuth)
- *   2. Forwards the verified identity + form payload to the Apps Script webhook
- *   3. Returns the Apps Script response to the client
+ * Single chokepoint for finalized registrations. Requires:
+ *   - Valid Discord JWT (proves OAuth completed)
+ *   - PayPal orderId (we re-verify the capture server-side)
  *
- * Why this exists instead of the React app POSTing directly to Apps Script:
- *   - The JWT secret stays server-side (browser never sees it)
- *   - Apps Script trusts the discordId/username because it can only come from
- *     a JWT we minted, which can only be minted after a real OAuth flow
- *   - Single chokepoint to add rate limiting / logging later
+ * We RE-VERIFY the PayPal capture server-side instead of trusting the client
+ * payload. A malicious client could otherwise claim "I paid, here's a fake
+ * orderId" and we'd record an unpaid registration.
  *
  * Required env vars:
- *   AUTH_JWT_SECRET
- *   SHEETS_WEBHOOK_URL    — the Apps Script /exec URL
+ *   AUTH_JWT_SECRET, SHEETS_WEBHOOK_URL,
+ *   PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV
  */
 
 import crypto from "node:crypto";
@@ -41,35 +38,99 @@ function verifyJWT(token, secret) {
   }
 }
 
+function paypalBaseUrl() {
+  return process.env.PAYPAL_ENV === "live"
+    ? "https://api-m.paypal.com"
+    : "https://api-m.sandbox.paypal.com";
+}
+
+async function getPaypalAccessToken() {
+  const auth = Buffer.from(
+    `${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_CLIENT_SECRET}`
+  ).toString("base64");
+  const res = await fetch(`${paypalBaseUrl()}/v1/oauth2/token`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: "grant_type=client_credentials",
+  });
+  if (!res.ok) throw new Error("PayPal token request failed");
+  return (await res.json()).access_token;
+}
+
+/**
+ * Re-fetch the order from PayPal and confirm it's actually CAPTURED.
+ * Don't trust the client's claim that it was paid.
+ */
+async function verifyPayPalCapture(orderId) {
+  const token = await getPaypalAccessToken();
+  const res = await fetch(`${paypalBaseUrl()}/v2/checkout/orders/${orderId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  const order = await res.json();
+  if (order.status !== "COMPLETED") return null;
+  const capture = order.purchase_units?.[0]?.payments?.captures?.[0];
+  if (!capture || capture.status !== "COMPLETED") return null;
+  return {
+    captureId: capture.id,
+    amount: capture.amount?.value,
+    payerEmail: order.payer?.email_address,
+  };
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ ok: false, error: "Method not allowed." });
   }
 
-  const jwtSecret = process.env.AUTH_JWT_SECRET;
-  const sheetsUrl = process.env.SHEETS_WEBHOOK_URL;
-  if (!jwtSecret || !sheetsUrl) {
+  if (
+    !process.env.AUTH_JWT_SECRET ||
+    !process.env.SHEETS_WEBHOOK_URL ||
+    !process.env.PAYPAL_CLIENT_ID
+  ) {
     return res.status(500).json({ ok: false, error: "Server misconfigured." });
   }
 
-  const { authToken, ...registration } = req.body || {};
-  const verified = verifyJWT(authToken, jwtSecret);
+  const { authToken, paypalOrderId, ...registration } = req.body || {};
+
+  // Discord identity gate
+  const verified = verifyJWT(authToken, process.env.AUTH_JWT_SECRET);
   if (!verified) {
     return res
       .status(401)
-      .json({ ok: false, error: "Discord identity expired — please sign in again." });
+      .json({ ok: false, error: "Discord identity expired. Please sign in again." });
   }
 
-  // Inject the verified identity. The client-supplied discordId is ignored —
-  // we trust only what we can verify.
+  // PayPal proof gate — server-side verification, no client trust
+  if (!paypalOrderId) {
+    return res
+      .status(400)
+      .json({ ok: false, error: "Missing PayPal order ID." });
+  }
+  const paymentProof = await verifyPayPalCapture(paypalOrderId);
+  if (!paymentProof) {
+    return res
+      .status(402)
+      .json({ ok: false, error: "Payment not verified. Please retry." });
+  }
+
+  // Inject verified identity + payment details
   const payload = {
     ...registration,
     discordId: verified.sub,
     discordUsername: verified.global_name || verified.username,
+    paypalOrderId,
+    paypalCaptureId: paymentProof.captureId,
+    paypalAmount: paymentProof.amount,
+    paypalPayerEmail: paymentProof.payerEmail,
+    paymentStatus: "Paid",
   };
 
   try {
-    const upstream = await fetch(sheetsUrl, {
+    const upstream = await fetch(process.env.SHEETS_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify(payload),
