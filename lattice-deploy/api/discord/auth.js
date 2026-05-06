@@ -5,12 +5,20 @@
  * page. After the user clicks "Authorize", Discord redirects back to
  * /api/discord/callback with a one-time code.
  *
- * Required environment variables (set in Vercel → Settings → Env Vars):
+ * Optional query param:
+ *   return_to=admin   → callback redirects to /admin instead of /
+ *
+ * Required environment variables:
  *   DISCORD_CLIENT_ID
  *   DISCORD_REDIRECT_URI   — e.g. https://your-domain.vercel.app/api/discord/callback
  */
 
 import crypto from "node:crypto";
+
+// Allowlist of valid return_to values. Anything else is treated as default
+// to prevent open-redirect abuse (where someone crafts a malicious
+// return_to=https://evil.com link).
+const VALID_RETURN_TO = new Set(["admin", "register"]);
 
 export default function handler(req, res) {
   const clientId = process.env.DISCORD_CLIENT_ID;
@@ -23,14 +31,21 @@ export default function handler(req, res) {
     });
   }
 
-  // Random state token — guards against CSRF on the callback.
-  // We set it as an httpOnly cookie and verify it matches in the callback.
-  const state = crypto.randomBytes(16).toString("hex");
+  const requestedReturn = String(req.query?.return_to || "").trim();
+  const returnTo = VALID_RETURN_TO.has(requestedReturn) ? requestedReturn : "register";
 
-  // 10-minute cookie window — plenty for the OAuth round-trip.
+  // CSRF guard token, base32-ish for cookie safety
+  const csrfToken = crypto.randomBytes(16).toString("hex");
+  // Encode return_to into the OAuth state so it survives the round-trip.
+  // Discord echoes state back to us; we split it on a delimiter that won't
+  // appear in the random hex.
+  const state = `${csrfToken}.${returnTo}`;
+
+  // 10-minute cookie window — only the CSRF half gets stored, not return_to,
+  // since return_to is also in the state and we cross-reference.
   res.setHeader(
     "Set-Cookie",
-    `discord_oauth_state=${state}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`
+    `discord_oauth_state=${csrfToken}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`
   );
 
   const params = new URLSearchParams({
