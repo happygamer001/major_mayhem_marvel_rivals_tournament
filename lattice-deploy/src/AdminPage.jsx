@@ -315,19 +315,20 @@ function SeedingInterface({ authToken }) {
 
       <h2 className="font-display text-3xl mb-2">Seed the bracket</h2>
       <p className="font-body text-[#c8c2b3] mb-8 max-w-2xl">
-        Enter the 16 teams in seed order, one per line in the format{" "}
+        Enter your teams in seed order, one per line in the format{" "}
         <code className="font-mono text-yellow-300 bg-[#0a0e1a] px-1.5 py-0.5">
           TeamID:Team Name
         </code>
-        . Pairs of consecutive lines play each other in WB-R1: lines 1+2 →
-        Match 1, lines 3+4 → Match 2, etc.
+        . Up to 16 teams. Any unused slots become BYEs — top seeds will
+        auto-advance through them. Pairs of consecutive lines play each other
+        in WB-R1.
       </p>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
           <label className="block">
             <span className="font-mono text-[11px] text-[#c8c2b3] tracking-widest uppercase mb-1.5 block">
-              SEEDED TEAMS · 16 LINES
+              SEEDED TEAMS · 2 TO 16 LINES
             </span>
             <textarea
               value={rawInput}
@@ -351,11 +352,23 @@ function SeedingInterface({ authToken }) {
           </div>
           <div className="font-mono text-xs space-y-1 mb-4">
             <div className="flex justify-between">
-              <span className="text-[#c8c2b3]">Lines parsed:</span>
-              <span className={parsed.teams.length === 16 ? "text-green-300" : "text-yellow-300"}>
-                {parsed.teams.length} / 16
+              <span className="text-[#c8c2b3]">Teams entered:</span>
+              <span
+                className={
+                  parsed.teams.length >= 2 && parsed.teams.length <= 16
+                    ? "text-green-300"
+                    : "text-yellow-300"
+                }
+              >
+                {parsed.teams.length}
               </span>
             </div>
+            {parsed.teams.length > 0 && parsed.teams.length < 16 && (
+              <div className="flex justify-between">
+                <span className="text-[#c8c2b3]">BYEs added:</span>
+                <span className="text-yellow-300">{16 - parsed.teams.length}</span>
+              </div>
+            )}
             {parsed.error && (
               <div className="text-red-300 mt-2 leading-snug">
                 {parsed.error}
@@ -367,20 +380,29 @@ function SeedingInterface({ authToken }) {
               {Array.from({ length: 8 }).map((_, i) => {
                 const a = parsed.teams[i * 2];
                 const b = parsed.teams[i * 2 + 1];
+                const isByeMatch = !a && !b;
                 return (
                   <div
                     key={i}
-                    className="border border-[#f5f1e8]/10 bg-[#0a0e1a] p-2"
+                    className={`border p-2 ${
+                      isByeMatch
+                        ? "border-[#f5f1e8]/5 bg-[#0a0e1a]/40 opacity-50"
+                        : "border-[#f5f1e8]/10 bg-[#0a0e1a]"
+                    }`}
                   >
                     <div className="font-mono text-[9px] text-yellow-400 mb-1">
                       WB-R1-M{i + 1}
                     </div>
                     <div className="text-xs truncate text-[#f5f1e8]">
-                      {a?.teamName || <em className="text-[#6b7280]">empty</em>}
+                      {a?.teamName || (
+                        <em className="text-yellow-400/60">(BYE)</em>
+                      )}
                     </div>
                     <div className="text-xs text-[#6b7280] my-0.5">vs.</div>
                     <div className="text-xs truncate text-[#f5f1e8]">
-                      {b?.teamName || <em className="text-[#6b7280]">empty</em>}
+                      {b?.teamName || (
+                        <em className="text-yellow-400/60">(BYE)</em>
+                      )}
                     </div>
                   </div>
                 );
@@ -406,9 +428,9 @@ function SeedingInterface({ authToken }) {
       <div className="mt-6 flex items-center gap-3">
         <button
           onClick={handleSubmit}
-          disabled={status === "submitting" || parsed.teams.length !== 16}
+          disabled={status === "submitting" || parsed.teams.length < 2 || parsed.teams.length > 16}
           className={`font-display px-7 py-3 border-2 transition-all flex items-center gap-2 ${
-            status !== "submitting" && parsed.teams.length === 16
+            status !== "submitting" && parsed.teams.length >= 2 && parsed.teams.length <= 16
               ? "bg-yellow-400 text-black border-yellow-400 hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_0_#ef4444] cursor-pointer"
               : "bg-transparent text-[#6b7280] border-[#6b7280] cursor-not-allowed"
           }`}
@@ -467,7 +489,13 @@ function parseTeams(raw) {
   if (teams.length > 16) {
     return {
       teams,
-      error: `Too many teams (${teams.length}). The bracket holds exactly 16.`,
+      error: `Too many teams (${teams.length}). The bracket holds at most 16.`,
+    };
+  }
+  if (teams.length === 1) {
+    return {
+      teams,
+      error: "Need at least 2 teams to run a bracket.",
     };
   }
 
