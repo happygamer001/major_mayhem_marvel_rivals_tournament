@@ -2,15 +2,12 @@
  * GET /api/discord/callback?code=...&state=...
  *
  * Discord redirects here after the user authorizes. We:
- *   1. Verify the state matches the cookie (CSRF guard)
- *   2. Exchange the code for an access token (server-to-server, secret-protected)
- *   3. Fetch the user's Discord profile
- *   4. Sign their ID + username into a short-lived JWT
- *   5. Redirect back to /register with the JWT in a query param
- *
- * The frontend then includes the JWT in the registration POST. Apps Script
- * doesn't verify the JWT — we re-verify it here in /api/submit instead, so
- * the secret stays in serverless-land.
+ *   1. Verify the CSRF half of the state matches the cookie
+ *   2. Extract the return_to half of the state to know where to redirect
+ *   3. Exchange the code for an access token (server-to-server)
+ *   4. Fetch the user's Discord profile
+ *   5. Sign their ID + username into a short-lived JWT
+ *   6. Redirect back to the appropriate page (/ or /admin) with the JWT
  *
  * Required env vars:
  *   DISCORD_CLIENT_ID
@@ -20,6 +17,8 @@
  */
 
 import crypto from "node:crypto";
+
+const VALID_RETURN_TO = new Set(["admin", "register"]);
 
 function signJWT(payload, secret) {
   const header = { alg: "HS256", typ: "JWT" };
@@ -65,14 +64,19 @@ export default async function handler(req, res) {
     return res.status(500).send("Server OAuth configuration incomplete.");
   }
 
+  // State format: "{csrfToken}.{returnTo}"
+  const [csrfFromState, returnToFromState] = String(state).split(".");
+  const returnTo = VALID_RETURN_TO.has(returnToFromState)
+    ? returnToFromState
+    : "register";
+
   // CSRF guard
   const cookies = parseCookies(req);
-  if (!cookies.discord_oauth_state || cookies.discord_oauth_state !== state) {
+  if (!cookies.discord_oauth_state || cookies.discord_oauth_state !== csrfFromState) {
     return res.status(403).send("State mismatch — please retry sign-in.");
   }
 
   try {
-    // Exchange code for access token
     const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -91,7 +95,6 @@ export default async function handler(req, res) {
     }
     const tokenJson = await tokenRes.json();
 
-    // Fetch user identity
     const userRes = await fetch("https://discord.com/api/users/@me", {
       headers: { Authorization: `Bearer ${tokenJson.access_token}` },
     });
@@ -100,7 +103,6 @@ export default async function handler(req, res) {
     }
     const user = await userRes.json();
 
-    // Sign a 30-min JWT containing the verified identity
     const token = signJWT(
       {
         sub: user.id,
@@ -117,9 +119,9 @@ export default async function handler(req, res) {
       "discord_oauth_state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
     );
 
-    // Redirect back to the SPA with the JWT. The React app reads it from the
-    // URL hash (so it doesn't appear in server logs as a query param).
-    res.redirect(302, `/?auth=${encodeURIComponent(token)}#/register`);
+    // Redirect to the appropriate destination
+    const dest = returnTo === "admin" ? "/admin" : "/";
+    res.redirect(302, `${dest}?auth=${encodeURIComponent(token)}`);
   } catch (err) {
     console.error("OAuth callback error:", err);
     res.status(500).send("OAuth flow failed.");
