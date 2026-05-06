@@ -91,10 +91,10 @@ export default async function handler(req, res) {
   }
 
   // Validate payload shape
-  if (!Array.isArray(seededTeams) || seededTeams.length !== 16) {
+  if (!Array.isArray(seededTeams) || seededTeams.length < 2 || seededTeams.length > 16) {
     return res.status(400).json({
       ok: false,
-      error: "Need exactly 16 seeded teams.",
+      error: "Need between 2 and 16 seeded teams.",
     });
   }
   for (const t of seededTeams) {
