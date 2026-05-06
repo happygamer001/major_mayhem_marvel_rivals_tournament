@@ -21,6 +21,7 @@ import {
   Lock,
   ShieldCheck,
 } from "lucide-react";
+import AdminPage from "./AdminPage.jsx";
 
 /* ──────────────────────────────────────────────────────────────
    LATTICE OPEN TOURNAMENT — Major Mayhem
@@ -176,6 +177,12 @@ function computeFee({ teamType, partialMemberCount }) {
 /* ────────────────────── ROOT ────────────────────── */
 
 export default function App() {
+  // Determine route from pathname. Done as a const (not state) because the
+  // path doesn't change without a full page navigation, so we don't need to
+  // re-render on path changes.
+  const isAdminRoute =
+    typeof window !== "undefined" && window.location.pathname === "/admin";
+
   const [view, setView] = useState("landing"); // landing | register | brackets | leaderboards | streamers
   const [submitted, setSubmitted] = useState(null);
   const [authToken, setAuthToken] = useState(null);
@@ -203,6 +210,12 @@ export default function App() {
       setView("register");
     }
   }, []);
+
+  // Early return for /admin route. All hooks above this line run regardless,
+  // satisfying React's rules-of-hooks even though we don't use them on /admin.
+  if (isAdminRoute) {
+    return <AdminPage />;
+  }
 
   return (
     <div className="font-body min-h-screen w-full bg-[#0a0e1a] text-[#f5f1e8] relative overflow-hidden">
