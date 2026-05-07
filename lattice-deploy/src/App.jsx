@@ -313,18 +313,20 @@ function Landing({ onPick }) {
     {
       key: "brackets",
       label: "Tournament Brackets",
-      sub: "Live bracket once seeding closes",
+      sub: "Live double-elim once seeding closes",
       icon: Trophy,
-      live: false,
-      accent: "cream",
+      live: true,
+      href: "/bracket",
+      accent: "yellow",
     },
     {
       key: "leaderboards",
       label: "Leaderboards",
-      sub: "Scrim performance + opt-in rankings",
+      sub: "Standings, W/L, status — updated live",
       icon: Sparkles,
-      live: false,
-      accent: "cream",
+      live: true,
+      href: "/leaderboard",
+      accent: "yellow",
     },
     {
       key: "streamers",
@@ -374,7 +376,14 @@ function Landing({ onPick }) {
           <Tile
             key={t.key}
             tile={t}
-            onClick={() => t.live && onPick(t.key)}
+            onClick={() => {
+              if (!t.live) return;
+              if (t.href) {
+                window.location.href = t.href;
+              } else {
+                onPick(t.key);
+              }
+            }}
             disabled={!t.live}
             delay={i * 80}
           />
