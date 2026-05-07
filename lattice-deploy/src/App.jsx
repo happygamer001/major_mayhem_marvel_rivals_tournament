@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import AdminPage from "./AdminPage.jsx";
 import BracketPage from "./BracketPage.jsx";
+import LeaderboardPage from "./LeaderboardPage.jsx";
 
 /* ──────────────────────────────────────────────────────────────
    LATTICE OPEN TOURNAMENT — Major Mayhem
@@ -185,6 +186,8 @@ export default function App() {
     typeof window !== "undefined" && window.location.pathname === "/admin";
   const isBracketRoute =
     typeof window !== "undefined" && window.location.pathname === "/bracket";
+  const isLeaderboardRoute =
+    typeof window !== "undefined" && window.location.pathname === "/leaderboard";
 
   const [view, setView] = useState("landing"); // landing | register | brackets | leaderboards | streamers
   const [submitted, setSubmitted] = useState(null);
@@ -221,6 +224,9 @@ export default function App() {
   }
   if (isBracketRoute) {
     return <BracketPage />;
+  }
+  if (isLeaderboardRoute) {
+    return <LeaderboardPage />;
   }
 
   return (
