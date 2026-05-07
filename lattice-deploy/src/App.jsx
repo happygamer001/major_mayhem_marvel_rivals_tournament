@@ -22,6 +22,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import AdminPage from "./AdminPage.jsx";
+import BracketPage from "./BracketPage.jsx";
 
 /* ──────────────────────────────────────────────────────────────
    LATTICE OPEN TOURNAMENT — Major Mayhem
@@ -182,6 +183,8 @@ export default function App() {
   // re-render on path changes.
   const isAdminRoute =
     typeof window !== "undefined" && window.location.pathname === "/admin";
+  const isBracketRoute =
+    typeof window !== "undefined" && window.location.pathname === "/bracket";
 
   const [view, setView] = useState("landing"); // landing | register | brackets | leaderboards | streamers
   const [submitted, setSubmitted] = useState(null);
@@ -215,6 +218,9 @@ export default function App() {
   // satisfying React's rules-of-hooks even though we don't use them on /admin.
   if (isAdminRoute) {
     return <AdminPage />;
+  }
+  if (isBracketRoute) {
+    return <BracketPage />;
   }
 
   return (
