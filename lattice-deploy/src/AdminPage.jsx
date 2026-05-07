@@ -15,6 +15,7 @@ import {
   Swords,
   X,
   RefreshCw,
+  Radio,
 } from "lucide-react";
 
 /**
@@ -561,6 +562,7 @@ function MatchManagement({
 }) {
   const [resultModal, setResultModal] = useState(null); // { match }
   const [revertModal, setRevertModal] = useState(null); // { match }
+  const [streamModal, setStreamModal] = useState(null); // { match }
   const [confirmReset, setConfirmReset] = useState(false);
 
   // Detect champion (a match with feeds_winner_to=CHAMPION and a winner_id)
@@ -643,6 +645,7 @@ function MatchManagement({
                   match={m}
                   onClickResult={() => setResultModal({ match: m })}
                   onClickRevert={() => setRevertModal({ match: m })}
+                  onClickStream={() => setStreamModal({ match: m })}
                 />
               ))}
             </div>
@@ -669,6 +672,18 @@ function MatchManagement({
           onClose={() => setRevertModal(null)}
           onSuccess={() => {
             setRevertModal(null);
+            onChanged();
+          }}
+        />
+      )}
+
+      {streamModal && (
+        <StreamModal
+          authToken={authToken}
+          match={streamModal.match}
+          onClose={() => setStreamModal(null)}
+          onSuccess={() => {
+            setStreamModal(null);
             onChanged();
           }}
         />
@@ -708,16 +723,21 @@ function MatchManagement({
   );
 }
 
-function MatchCard({ match, onClickResult, onClickRevert }) {
+function MatchCard({ match, onClickResult, onClickRevert, onClickStream }) {
   const isCompleted = match.status === "completed";
   const isBye = match.status === "completed-bye";
   const isReady = match.status === "ready";
   const isPending = match.status === "pending";
+  const hasStream = !!match.streaming_url;
 
   const teamAIsBye = match.team_a_id === "__BYE__";
   const teamBIsBye = match.team_b_id === "__BYE__";
   const winnerIsA = isCompleted && match.winner_id === match.team_a_id;
   const winnerIsB = isCompleted && match.winner_id === match.team_b_id;
+
+  // Stream button is available on ready (live now) and completed (set retroactively)
+  // matches that have real teams. Not for BYE matches or pending matches.
+  const canSetStream = (isReady || isCompleted) && !teamAIsBye && !teamBIsBye;
 
   let statusBadge = null;
   let borderClass = "border-[#f5f1e8]/15";
@@ -728,7 +748,9 @@ function MatchCard({ match, onClickResult, onClickRevert }) {
     borderClass = "border-[#f5f1e8]/10 opacity-60";
   } else if (isReady) {
     statusBadge = <StatusBox color="yellow" label="READY" />;
-    borderClass = "border-yellow-400/40 hover:border-yellow-400 cursor-pointer";
+    borderClass = hasStream
+      ? "border-red-400 cursor-pointer"
+      : "border-yellow-400/40 hover:border-yellow-400 cursor-pointer";
     interactionProps = { onClick: onClickResult };
   } else if (isCompleted) {
     statusBadge = <StatusBox color="green" label="DONE" />;
@@ -739,16 +761,34 @@ function MatchCard({ match, onClickResult, onClickRevert }) {
     borderClass = "border-[#f5f1e8]/5 opacity-50";
   }
 
+  const handleStreamClick = (e) => {
+    e.stopPropagation();
+    if (onClickStream) onClickStream();
+  };
+
   return (
     <div
       {...interactionProps}
       className={`bg-[#131a2a] border-2 ${borderClass} p-3 transition-colors`}
     >
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-2 gap-1">
         <div className="font-mono text-[10px] text-yellow-400 tracking-wider">
           {match.match_id}
         </div>
-        {statusBadge}
+        <div className="flex items-center gap-1">
+          {hasStream && (
+            <span
+              className="flex items-center gap-1 px-1.5 py-0.5 bg-red-500/30 border border-red-400"
+              title="Currently being broadcast"
+            >
+              <Radio className="w-2.5 h-2.5 text-red-200" />
+              <span className="font-mono text-[9px] text-red-200 tracking-wider">
+                LIVE
+              </span>
+            </span>
+          )}
+          {statusBadge}
+        </div>
       </div>
 
       <TeamRow
@@ -767,16 +807,34 @@ function MatchCard({ match, onClickResult, onClickRevert }) {
         isWinner={winnerIsB}
       />
 
-      {isReady && !teamAIsBye && !teamBIsBye && (
-        <div className="font-mono text-[9px] text-yellow-400/80 mt-2 text-center">
-          ↳ click to enter result
-        </div>
-      )}
-      {isCompleted && (
-        <div className="font-mono text-[9px] text-green-400/80 mt-2 text-center">
-          ↳ click to revert
-        </div>
-      )}
+      <div className="mt-2 flex items-center justify-between gap-2">
+        {isReady && !teamAIsBye && !teamBIsBye && (
+          <span className="font-mono text-[9px] text-yellow-400/80">
+            ↳ click for result
+          </span>
+        )}
+        {isCompleted && (
+          <span className="font-mono text-[9px] text-green-400/80">
+            ↳ click to revert
+          </span>
+        )}
+        {!isReady && !isCompleted && <span />}
+
+        {canSetStream && (
+          <button
+            onClick={handleStreamClick}
+            className={`font-mono text-[9px] tracking-wider px-1.5 py-0.5 border transition-colors flex items-center gap-1 ${
+              hasStream
+                ? "bg-red-500/20 border-red-400 text-red-200 hover:bg-red-500/40"
+                : "border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400"
+            }`}
+            title={hasStream ? "Currently broadcasting — click to change/clear" : "Mark as broadcasting"}
+          >
+            <Radio className="w-2.5 h-2.5" />
+            {hasStream ? "EDIT" : "STREAM"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -1116,6 +1174,106 @@ function RevertModal({ authToken, match, onClose, onSuccess }) {
         >
           <RotateCcw className="w-3 h-3" />
           {submitting ? "REVERTING…" : "REVERT RESULT"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function StreamModal({ authToken, match, onClose, onSuccess }) {
+  const [url, setUrl] = useState(match.streaming_url || "");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const hasExisting = !!match.streaming_url;
+  const trimmed = url.trim();
+  const isValid = !trimmed || /^https?:\/\//i.test(trimmed);
+  const willClear = !trimmed && hasExisting;
+
+  const submit = async (newUrl) => {
+    setError("");
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/set-stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          authToken,
+          matchId: match.match_id,
+          url: newUrl,
+        }),
+      });
+      const result = await res.json();
+      if (!result.ok) {
+        setError(result.error || "Could not save stream URL.");
+        setSubmitting(false);
+        return;
+      }
+      onSuccess();
+    } catch (err) {
+      setError("Network error. Try again.");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <ModalShell onClose={onClose} title={`Stream URL · ${match.match_id}`}>
+      <p className="font-body text-sm text-[#c8c2b3] mb-4 leading-relaxed">
+        Paste the URL of the live broadcast for this match. The bracket page
+        will show a "🔴 LIVE" badge that links here. The URL clears
+        automatically when this match completes.
+      </p>
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">
+        BROADCAST URL
+      </div>
+      <input
+        type="url"
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        placeholder="https://twitch.tv/major_mayhem"
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400 mb-2"
+      />
+      {!isValid && (
+        <div className="font-mono text-[11px] text-red-300 mb-3">
+          URL must start with http:// or https://
+        </div>
+      )}
+
+      {error && (
+        <div className="border-l-4 border-red-500 bg-red-500/10 p-3 font-mono text-xs text-red-300 mb-4">
+          {error}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2 justify-end mt-4">
+        <button
+          onClick={onClose}
+          disabled={submitting}
+          className="font-mono text-xs px-4 py-2 border border-[#c8c2b3] text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400 disabled:opacity-50"
+        >
+          CANCEL
+        </button>
+        {hasExisting && (
+          <button
+            onClick={() => submit("")}
+            disabled={submitting}
+            className="font-mono text-xs px-4 py-2 bg-red-500/30 border border-red-400 text-red-200 hover:bg-red-500/50 disabled:opacity-50"
+            title="Clear the live indicator"
+          >
+            CLEAR
+          </button>
+        )}
+        <button
+          onClick={() => submit(trimmed)}
+          disabled={submitting || !isValid || (!trimmed && !hasExisting)}
+          className={`font-display px-5 py-2 border-2 transition-all ${
+            !submitting && isValid && (trimmed || willClear)
+              ? "bg-yellow-400 text-black border-yellow-400 hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_0_#ef4444]"
+              : "bg-transparent text-[#6b7280] border-[#6b7280] cursor-not-allowed"
+          }`}
+        >
+          {submitting ? "SAVING…" : hasExisting ? "UPDATE" : "GO LIVE"}
         </button>
       </div>
     </ModalShell>
