@@ -18,7 +18,7 @@ import crypto from "node:crypto";
 // Allowlist of valid return_to values. Anything else is treated as default
 // to prevent open-redirect abuse (where someone crafts a malicious
 // return_to=https://evil.com link).
-const VALID_RETURN_TO = new Set(["admin", "register"]);
+const VALID_RETURN_TO = new Set(["admin", "register", "streamers"]);
 
 export default function handler(req, res) {
   const clientId = process.env.DISCORD_CLIENT_ID;
