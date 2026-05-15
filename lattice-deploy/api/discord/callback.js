@@ -18,7 +18,7 @@
 
 import crypto from "node:crypto";
 
-const VALID_RETURN_TO = new Set(["admin", "register"]);
+const VALID_RETURN_TO = new Set(["admin", "register", "streamers"]);
 
 function signJWT(payload, secret) {
   const header = { alg: "HS256", typ: "JWT" };
@@ -120,7 +120,9 @@ export default async function handler(req, res) {
     );
 
     // Redirect to the appropriate destination
-    const dest = returnTo === "admin" ? "/admin" : "/";
+    let dest = "/";
+    if (returnTo === "admin") dest = "/admin";
+    else if (returnTo === "streamers") dest = "/streamers";
     res.redirect(302, `${dest}?auth=${encodeURIComponent(token)}`);
   } catch (err) {
     console.error("OAuth callback error:", err);
