@@ -16,6 +16,12 @@ import {
   X,
   RefreshCw,
   Radio,
+  Star,
+  Trash2,
+  Plus,
+  ExternalLink,
+  UserCheck,
+  UserX,
 } from "lucide-react";
 
 /**
@@ -253,6 +259,7 @@ function ModDashboard({ authToken, identity, modInfo }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [forceSeedView, setForceSeedView] = useState(false);
+  const [activeTab, setActiveTab] = useState("bracket"); // "bracket" | "streamers"
 
   const fetchBracket = useCallback(async () => {
     try {
@@ -276,18 +283,19 @@ function ModDashboard({ authToken, identity, modInfo }) {
     fetchBracket();
   }, [fetchBracket]);
 
-  // Poll every 10 seconds while page is open (so multi-mod ops stay in sync)
+  // Poll every 10 seconds while page is open (so multi-mod ops stay in sync).
+  // Only poll when the bracket tab is active — streamer hub has its own polling.
   useEffect(() => {
-    if (loading || error) return;
+    if (loading || error || activeTab !== "bracket") return;
     const interval = setInterval(fetchBracket, 10000);
     return () => clearInterval(interval);
-  }, [loading, error, fetchBracket]);
+  }, [loading, error, fetchBracket, activeTab]);
 
   const showSeedingView = forceSeedView || !bracket || bracket.length === 0;
 
   return (
     <section className="slide-up">
-      <div className="border-2 border-green-400/30 bg-[#131a2a] p-4 mb-8 flex items-center gap-3">
+      <div className="border-2 border-green-400/30 bg-[#131a2a] p-4 mb-6 flex items-center gap-3">
         <Shield className="w-5 h-5 text-green-400" />
         <div>
           <div className="font-mono text-xs text-green-300">AUTHORIZED</div>
@@ -298,45 +306,84 @@ function ModDashboard({ authToken, identity, modInfo }) {
         </div>
       </div>
 
-      {loading && (
-        <div className="font-mono text-sm text-[#c8c2b3] animate-pulse">
-          Loading bracket state…
-        </div>
+      {/* Tab navigation */}
+      <div className="flex items-center gap-2 mb-6 border-b border-[#f5f1e8]/15">
+        <TabButton
+          active={activeTab === "bracket"}
+          onClick={() => setActiveTab("bracket")}
+        >
+          BRACKET
+        </TabButton>
+        <TabButton
+          active={activeTab === "streamers"}
+          onClick={() => setActiveTab("streamers")}
+        >
+          STREAMER HUB
+        </TabButton>
+      </div>
+
+      {activeTab === "bracket" && (
+        <>
+          {loading && (
+            <div className="font-mono text-sm text-[#c8c2b3] animate-pulse">
+              Loading bracket state…
+            </div>
+          )}
+
+          {!loading && error && (
+            <div className="border-l-4 border-red-500 bg-red-500/10 p-4 max-w-xl">
+              <div className="font-display text-lg mb-1">Couldn't load bracket</div>
+              <p className="font-body text-sm text-red-300 mb-4">{error}</p>
+              <button
+                onClick={fetchBracket}
+                className="font-mono text-xs px-3 py-2 border border-red-300 text-red-300 hover:bg-red-500/20"
+              >
+                RETRY
+              </button>
+            </div>
+          )}
+
+          {!loading && !error && showSeedingView && (
+            <SeedingInterface
+              authToken={authToken}
+              onSeeded={() => {
+                setForceSeedView(false);
+                fetchBracket();
+              }}
+            />
+          )}
+
+          {!loading && !error && !showSeedingView && (
+            <MatchManagement
+              authToken={authToken}
+              identity={identity}
+              bracket={bracket}
+              onChanged={fetchBracket}
+              onResetBracket={() => setForceSeedView(true)}
+            />
+          )}
+        </>
       )}
 
-      {!loading && error && (
-        <div className="border-l-4 border-red-500 bg-red-500/10 p-4 max-w-xl">
-          <div className="font-display text-lg mb-1">Couldn't load bracket</div>
-          <p className="font-body text-sm text-red-300 mb-4">{error}</p>
-          <button
-            onClick={fetchBracket}
-            className="font-mono text-xs px-3 py-2 border border-red-300 text-red-300 hover:bg-red-500/20"
-          >
-            RETRY
-          </button>
-        </div>
-      )}
-
-      {!loading && !error && showSeedingView && (
-        <SeedingInterface
-          authToken={authToken}
-          onSeeded={() => {
-            setForceSeedView(false);
-            fetchBracket();
-          }}
-        />
-      )}
-
-      {!loading && !error && !showSeedingView && (
-        <MatchManagement
-          authToken={authToken}
-          identity={identity}
-          bracket={bracket}
-          onChanged={fetchBracket}
-          onResetBracket={() => setForceSeedView(true)}
-        />
+      {activeTab === "streamers" && (
+        <StreamerHubAdmin authToken={authToken} identity={identity} />
       )}
     </section>
+  );
+}
+
+function TabButton({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`font-mono text-xs tracking-widest px-4 py-2 border-b-2 -mb-px transition-colors ${
+        active
+          ? "border-yellow-400 text-yellow-400"
+          : "border-transparent text-[#c8c2b3] hover:text-[#f5f1e8]"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -1314,6 +1361,642 @@ function ModalShell({ children, onClose, title }) {
     </div>
   );
 }
+
+/* ──────────────────────────── STREAMER HUB ADMIN ──────────────────────────── */
+
+function StreamerHubAdmin({ authToken, identity }) {
+  const [streamers, setStreamers] = useState(null);
+  const [clips, setClips] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [busyId, setBusyId] = useState(""); // tracks per-row busy state
+  const [addClipOpen, setAddClipOpen] = useState(false);
+
+  const fetchAll = useCallback(async () => {
+    setError(null);
+    try {
+      const [sRes, cRes] = await Promise.all([
+        fetch("/api/admin/streamers/list", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ authToken }),
+        }),
+        fetch("/api/admin/clips/list", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ authToken }),
+        }),
+      ]);
+      const sData = await sRes.json();
+      const cData = await cRes.json();
+      if (!sData.ok) {
+        setError(String(sData.error || "Could not load streamers."));
+        setLoading(false);
+        return;
+      }
+      setStreamers(Array.isArray(sData.streamers) ? sData.streamers : []);
+      setClips(cData.ok && Array.isArray(cData.clips) ? cData.clips : []);
+      setLoading(false);
+    } catch (err) {
+      setError("Network error.");
+      setLoading(false);
+    }
+  }, [authToken]);
+
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
+
+  const handleDecision = async (discordId, decision) => {
+    setBusyId(discordId);
+    try {
+      const res = await fetch("/api/admin/streamers/decision", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ authToken, discordId, decision }),
+      });
+      const result = await res.json();
+      if (!result.ok) {
+        setError(String(result.error || "Action failed."));
+      }
+      await fetchAll();
+    } catch (err) {
+      setError("Network error.");
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const handleToggleFeatured = async (discordId) => {
+    setBusyId(discordId);
+    try {
+      const res = await fetch("/api/admin/streamers/feature", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ authToken, discordId }),
+      });
+      const result = await res.json();
+      if (!result.ok) {
+        setError(String(result.error || "Action failed."));
+      }
+      await fetchAll();
+    } catch (err) {
+      setError("Network error.");
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const handleClipAction = async (clipUrl, action) => {
+    setBusyId(clipUrl);
+    try {
+      const res = await fetch("/api/admin/clips/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ authToken, clipUrl, action }),
+      });
+      const result = await res.json();
+      if (!result.ok) {
+        setError(String(result.error || "Action failed."));
+      }
+      await fetchAll();
+    } catch (err) {
+      setError("Network error.");
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="font-mono text-sm text-[#c8c2b3] animate-pulse">
+        Loading streamer hub…
+      </div>
+    );
+  }
+
+  if (error && !streamers) {
+    return (
+      <div className="border-l-4 border-red-500 bg-red-500/10 p-4 max-w-xl">
+        <div className="font-display text-lg mb-1">Couldn't load hub</div>
+        <p className="font-body text-sm text-red-300 mb-4">{String(error)}</p>
+        <button
+          onClick={fetchAll}
+          className="font-mono text-xs px-3 py-2 border border-red-300 text-red-300 hover:bg-red-500/20"
+        >
+          RETRY
+        </button>
+      </div>
+    );
+  }
+
+  const pending = streamers.filter((s) => s.status === "pending");
+  const approved = streamers.filter((s) => s.status === "approved");
+  const rejected = streamers.filter((s) => s.status === "rejected");
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+        <div>
+          <div className="font-mono text-xs text-yellow-400 tracking-widest mb-1">
+            STREAMER HUB
+          </div>
+          <div className="font-display text-2xl text-[#f5f1e8]">
+            Application Queue
+          </div>
+        </div>
+        <button
+          onClick={fetchAll}
+          className="font-mono text-xs tracking-wider px-3 py-2 border border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400 flex items-center gap-1.5"
+        >
+          <RefreshCw className="w-3 h-3" /> REFRESH
+        </button>
+      </div>
+
+      {error && (
+        <div className="border-l-4 border-red-500 bg-red-500/10 p-3 mb-4 font-mono text-xs text-red-300 max-w-xl">
+          {String(error)}
+        </div>
+      )}
+
+      {/* PENDING APPLICATIONS */}
+      <section className="mb-10">
+        <div className="font-mono text-[11px] text-yellow-300 tracking-widest mb-3 flex items-center gap-2">
+          PENDING APPLICATIONS
+          <span className="text-[#6b7280]">({pending.length})</span>
+        </div>
+        {pending.length === 0 ? (
+          <div className="font-body text-sm text-[#c8c2b3] italic">
+            No applications waiting for review.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {pending.map((s) => (
+              <StreamerRow
+                key={String(s.discordId)}
+                streamer={s}
+                section="pending"
+                busy={busyId === s.discordId}
+                onApprove={() => handleDecision(s.discordId, "approve")}
+                onReject={() => handleDecision(s.discordId, "reject")}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* APPROVED STREAMERS */}
+      <section className="mb-10">
+        <div className="font-mono text-[11px] text-green-300 tracking-widest mb-3 flex items-center gap-2">
+          APPROVED STREAMERS
+          <span className="text-[#6b7280]">({approved.length})</span>
+        </div>
+        {approved.length === 0 ? (
+          <div className="font-body text-sm text-[#c8c2b3] italic">
+            No approved streamers yet.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {approved.map((s) => (
+              <StreamerRow
+                key={String(s.discordId)}
+                streamer={s}
+                section="approved"
+                busy={busyId === s.discordId}
+                onToggleFeatured={() => handleToggleFeatured(s.discordId)}
+                onReject={() => handleDecision(s.discordId, "reject")}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* REJECTED — collapsed by default visually (just a faint list) */}
+      {rejected.length > 0 && (
+        <section className="mb-10">
+          <div className="font-mono text-[11px] text-[#6b7280] tracking-widest mb-3">
+            REJECTED ({rejected.length})
+          </div>
+          <div className="space-y-2 opacity-60">
+            {rejected.map((s) => (
+              <StreamerRow
+                key={String(s.discordId)}
+                streamer={s}
+                section="rejected"
+                busy={busyId === s.discordId}
+                onApprove={() => handleDecision(s.discordId, "approve")}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* CLIPS */}
+      <section>
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
+          <div className="font-mono text-[11px] text-yellow-300 tracking-widest flex items-center gap-2">
+            CLIPS
+            <span className="text-[#6b7280]">({clips ? clips.length : 0})</span>
+          </div>
+          <button
+            onClick={() => setAddClipOpen(true)}
+            disabled={approved.length === 0}
+            className={`font-mono text-xs tracking-wider px-3 py-2 border flex items-center gap-1.5 ${
+              approved.length === 0
+                ? "border-[#6b7280] text-[#6b7280] cursor-not-allowed"
+                : "border-yellow-400 text-yellow-400 hover:bg-yellow-400 hover:text-black"
+            }`}
+            title={
+              approved.length === 0
+                ? "Approve at least one streamer first"
+                : "Add a clip"
+            }
+          >
+            <Plus className="w-3 h-3" /> ADD CLIP
+          </button>
+        </div>
+
+        {clips && clips.length === 0 ? (
+          <div className="font-body text-sm text-[#c8c2b3] italic">
+            No clips yet. Click ADD CLIP to upload one.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {clips &&
+              clips.map((c, i) => (
+                <ClipRow
+                  key={String(c.clipUrl) + i}
+                  clip={c}
+                  busy={busyId === c.clipUrl}
+                  onToggleFeatured={() => handleClipAction(c.clipUrl, "feature")}
+                  onRemove={() => handleClipAction(c.clipUrl, "remove")}
+                />
+              ))}
+          </div>
+        )}
+      </section>
+
+      {addClipOpen && (
+        <AddClipModal
+          authToken={authToken}
+          streamers={approved}
+          onClose={() => setAddClipOpen(false)}
+          onSuccess={() => {
+            setAddClipOpen(false);
+            fetchAll();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function StreamerRow({
+  streamer,
+  section,
+  busy,
+  onApprove,
+  onReject,
+  onToggleFeatured,
+}) {
+  const name = String(streamer.streamerName || "—");
+  const twitch = String(streamer.twitchUrl || "");
+  const discord = String(streamer.discordUsername || "");
+  const family = !!streamer.familyFriendly;
+  const featured = !!streamer.featured;
+  const hasReg = !!streamer.hasTournamentRegistration;
+
+  return (
+    <div className="border-2 border-[#f5f1e8]/15 bg-[#131a2a] p-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="font-display text-base text-[#f5f1e8] truncate">
+              {name}
+            </span>
+            {featured && (
+              <span
+                title="Featured"
+                className="font-mono text-[9px] tracking-widest px-1.5 py-0.5 bg-yellow-400/20 text-yellow-300 border border-yellow-400/40 flex items-center gap-1"
+              >
+                <Star className="w-2.5 h-2.5" /> FEATURED
+              </span>
+            )}
+            {family && (
+              <span className="font-mono text-[9px] tracking-widest px-1.5 py-0.5 bg-green-400/15 text-green-300 border border-green-400/30">
+                FAMILY FRIENDLY
+              </span>
+            )}
+            {!hasReg && section === "pending" && (
+              <span
+                className="font-mono text-[9px] tracking-widest px-1.5 py-0.5 bg-orange-400/15 text-orange-300 border border-orange-400/40"
+                title="This applicant is not registered for the tournament"
+              >
+                ⚠ NOT REGISTERED
+              </span>
+            )}
+          </div>
+          <div className="font-mono text-[11px] text-[#c8c2b3] flex items-center gap-2 flex-wrap">
+            <span>@{discord}</span>
+            {twitch && (
+              <>
+                <span className="text-[#6b7280]">·</span>
+                <a
+                  href={twitch}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-yellow-400 hover:text-yellow-300 underline truncate inline-flex items-center gap-1"
+                >
+                  {twitch.replace(/^https?:\/\//, "")}
+                  <ExternalLink className="w-2.5 h-2.5" />
+                </a>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {section === "pending" && (
+            <>
+              <button
+                onClick={onApprove}
+                disabled={busy}
+                className="font-mono text-xs tracking-wider px-3 py-2 border-2 border-green-400 text-green-300 hover:bg-green-400 hover:text-black disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <UserCheck className="w-3 h-3" />
+                {busy ? "…" : "APPROVE"}
+              </button>
+              <button
+                onClick={onReject}
+                disabled={busy}
+                className="font-mono text-xs tracking-wider px-3 py-2 border-2 border-red-400/60 text-red-300 hover:bg-red-400 hover:text-black disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <UserX className="w-3 h-3" />
+                {busy ? "…" : "REJECT"}
+              </button>
+            </>
+          )}
+          {section === "approved" && (
+            <>
+              <button
+                onClick={onToggleFeatured}
+                disabled={busy}
+                className={`font-mono text-xs tracking-wider px-3 py-2 border-2 disabled:opacity-50 flex items-center gap-1.5 ${
+                  featured
+                    ? "border-yellow-400 bg-yellow-400/20 text-yellow-300"
+                    : "border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400"
+                }`}
+                title={featured ? "Currently featured" : "Mark as featured"}
+              >
+                <Star className="w-3 h-3" />
+                {busy ? "…" : featured ? "UNFEATURE" : "FEATURE"}
+              </button>
+              <button
+                onClick={onReject}
+                disabled={busy}
+                className="font-mono text-xs tracking-wider px-3 py-2 border-2 border-red-400/40 text-red-300/80 hover:bg-red-400/20 disabled:opacity-50"
+                title="Remove from hub (reject)"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </>
+          )}
+          {section === "rejected" && (
+            <button
+              onClick={onApprove}
+              disabled={busy}
+              className="font-mono text-xs tracking-wider px-3 py-2 border border-green-400/60 text-green-300/80 hover:bg-green-400/20 disabled:opacity-50"
+              title="Re-approve"
+            >
+              {busy ? "…" : "RE-APPROVE"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ClipRow({ clip, busy, onToggleFeatured, onRemove }) {
+  const caption = String(clip.caption || "");
+  const url = String(clip.clipUrl || "");
+  const streamer = String(clip.streamerName || "—");
+  const streamerUrl = String(clip.streamerTwitchUrl || "");
+  const featured = !!clip.featured;
+
+  return (
+    <div className="border-2 border-[#f5f1e8]/15 bg-[#131a2a] p-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="font-body text-sm text-[#f5f1e8] line-clamp-1">
+              {caption || "(no caption)"}
+            </span>
+            {featured && (
+              <span className="font-mono text-[9px] tracking-widest px-1.5 py-0.5 bg-yellow-400/20 text-yellow-300 border border-yellow-400/40 flex items-center gap-1">
+                <Star className="w-2.5 h-2.5" /> FEATURED
+              </span>
+            )}
+          </div>
+          <div className="font-mono text-[10px] text-[#c8c2b3] flex items-center gap-2 flex-wrap">
+            <span>
+              by{" "}
+              {streamerUrl ? (
+                <a
+                  href={streamerUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-yellow-400 hover:text-yellow-300 underline"
+                >
+                  {streamer}
+                </a>
+              ) : (
+                <span>{streamer}</span>
+              )}
+            </span>
+            <span className="text-[#6b7280]">·</span>
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[#c8c2b3] hover:text-yellow-400 underline truncate inline-flex items-center gap-1"
+            >
+              clip
+              <ExternalLink className="w-2.5 h-2.5" />
+            </a>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={onToggleFeatured}
+            disabled={busy}
+            className={`font-mono text-xs tracking-wider px-3 py-2 border-2 disabled:opacity-50 flex items-center gap-1.5 ${
+              featured
+                ? "border-yellow-400 bg-yellow-400/20 text-yellow-300"
+                : "border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400"
+            }`}
+          >
+            <Star className="w-3 h-3" />
+            {busy ? "…" : featured ? "UNFEATURE" : "FEATURE"}
+          </button>
+          <button
+            onClick={onRemove}
+            disabled={busy}
+            className="font-mono text-xs tracking-wider px-3 py-2 border-2 border-red-400/60 text-red-300 hover:bg-red-400 hover:text-black disabled:opacity-50"
+            title="Remove clip"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AddClipModal({ authToken, streamers, onClose, onSuccess }) {
+  const [selectedDiscordId, setSelectedDiscordId] = useState(
+    streamers[0]?.discordId || ""
+  );
+  const [clipUrl, setClipUrl] = useState("");
+  const [caption, setCaption] = useState("");
+  const [featured, setFeatured] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  // Close on Escape
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape" && !submitting) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, submitting]);
+
+  const selectedStreamer = streamers.find(
+    (s) => s.discordId === selectedDiscordId
+  );
+  const trimmedUrl = clipUrl.trim();
+  const urlValid = trimmedUrl && /^https?:\/\//i.test(trimmedUrl);
+  const canSubmit = !submitting && urlValid && selectedStreamer;
+
+  const handleSubmit = async () => {
+    setError("");
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/clips/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          authToken,
+          clipUrl: trimmedUrl,
+          streamerName: selectedStreamer.streamerName,
+          streamerTwitchUrl: selectedStreamer.twitchUrl,
+          caption: caption.trim(),
+          featured,
+        }),
+      });
+      const result = await res.json();
+      if (!result.ok) {
+        setError(String(result.error || "Could not add clip."));
+        setSubmitting(false);
+        return;
+      }
+      if (typeof onSuccess === "function") onSuccess();
+    } catch (err) {
+      setError("Network error.");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <ModalShell onClose={onClose} title="Add Clip">
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">
+        STREAMER
+      </div>
+      <select
+        value={selectedDiscordId}
+        onChange={(e) => setSelectedDiscordId(e.target.value)}
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400 mb-4"
+      >
+        {streamers.map((s) => (
+          <option key={String(s.discordId)} value={String(s.discordId)}>
+            {String(s.streamerName)} ({String(s.discordUsername || "")})
+          </option>
+        ))}
+      </select>
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">
+        TWITCH CLIP URL
+      </div>
+      <input
+        type="url"
+        value={clipUrl}
+        onChange={(e) => setClipUrl(e.target.value)}
+        placeholder="https://clips.twitch.tv/..."
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400 mb-2"
+      />
+      {clipUrl && !urlValid && (
+        <div className="font-mono text-[11px] text-red-300 mb-3">
+          URL must start with http:// or https://
+        </div>
+      )}
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1 mt-4">
+        CAPTION (optional)
+      </div>
+      <input
+        type="text"
+        value={caption}
+        onChange={(e) => setCaption(e.target.value)}
+        placeholder="Short description"
+        maxLength={120}
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400 mb-4"
+      />
+
+      <label className="flex items-center gap-2 cursor-pointer select-none mt-2">
+        <input
+          type="checkbox"
+          checked={featured}
+          onChange={(e) => setFeatured(e.target.checked)}
+          className="accent-yellow-400"
+        />
+        <span className="text-sm text-[#f5f1e8]">
+          Feature this clip on the hub
+        </span>
+      </label>
+
+      {error && (
+        <div className="border-l-4 border-red-500 bg-red-500/10 p-3 font-mono text-xs text-red-300 mt-4">
+          {error}
+        </div>
+      )}
+
+      <div className="flex gap-2 justify-end mt-6">
+        <button
+          onClick={onClose}
+          disabled={submitting}
+          className="font-mono text-xs px-4 py-2 border border-[#c8c2b3] text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400 disabled:opacity-50"
+        >
+          CANCEL
+        </button>
+        <button
+          onClick={handleSubmit}
+          disabled={!canSubmit}
+          className={`font-display px-5 py-2 border-2 transition-all ${
+            canSubmit
+              ? "bg-yellow-400 text-black border-yellow-400 hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_0_#ef4444]"
+              : "bg-transparent text-[#6b7280] border-[#6b7280] cursor-not-allowed"
+          }`}
+        >
+          {submitting ? "ADDING…" : "ADD CLIP"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+/* ──────────────────────────── END STREAMER HUB ADMIN ──────────────────────────── */
 
 /**
  * Parse the textarea input into a list of { teamId, teamName } objects.
