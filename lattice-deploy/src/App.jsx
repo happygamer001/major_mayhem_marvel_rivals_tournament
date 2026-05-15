@@ -24,6 +24,7 @@ import {
 import AdminPage from "./AdminPage.jsx";
 import BracketPage from "./BracketPage.jsx";
 import LeaderboardPage from "./LeaderboardPage.jsx";
+import StreamersPage from "./StreamersPage.jsx";
 
 /* ──────────────────────────────────────────────────────────────
    LATTICE OPEN TOURNAMENT — Major Mayhem
@@ -188,6 +189,8 @@ export default function App() {
     typeof window !== "undefined" && window.location.pathname === "/bracket";
   const isLeaderboardRoute =
     typeof window !== "undefined" && window.location.pathname === "/leaderboard";
+  const isStreamersRoute =
+    typeof window !== "undefined" && window.location.pathname === "/streamers";
 
   const [view, setView] = useState("landing"); // landing | register | brackets | leaderboards | streamers
   const [submitted, setSubmitted] = useState(null);
@@ -227,6 +230,9 @@ export default function App() {
   }
   if (isLeaderboardRoute) {
     return <LeaderboardPage />;
+  }
+  if (isStreamersRoute) {
+    return <StreamersPage />;
   }
 
   return (
@@ -331,10 +337,11 @@ function Landing({ onPick }) {
     {
       key: "streamers",
       label: "Streamer Hub",
-      sub: "Badges, overlays, schedule",
+      sub: "Featured streamers, clips, and apply to cast",
       icon: Radio,
-      live: false,
-      accent: "cream",
+      live: true,
+      href: "/streamers",
+      accent: "yellow",
     },
   ];
 
