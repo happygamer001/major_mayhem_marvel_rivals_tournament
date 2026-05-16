@@ -20,11 +20,14 @@ import {
   Sparkles,
   Lock,
   ShieldCheck,
+  Handshake,
 } from "lucide-react";
 import AdminPage from "./AdminPage.jsx";
 import BracketPage from "./BracketPage.jsx";
 import LeaderboardPage from "./LeaderboardPage.jsx";
 import StreamersPage from "./StreamersPage.jsx";
+import SponsorsPage from "./SponsorsPage.jsx";
+import SiteFooter from "./Footer.jsx";
 
 /* ──────────────────────────────────────────────────────────────
    LATTICE OPEN TOURNAMENT — Major Mayhem
@@ -191,6 +194,8 @@ export default function App() {
     typeof window !== "undefined" && window.location.pathname === "/leaderboard";
   const isStreamersRoute =
     typeof window !== "undefined" && window.location.pathname === "/streamers";
+  const isSponsorsRoute =
+    typeof window !== "undefined" && window.location.pathname === "/sponsors";
 
   const [view, setView] = useState("landing"); // landing | register | brackets | leaderboards | streamers
   const [submitted, setSubmitted] = useState(null);
@@ -234,6 +239,9 @@ export default function App() {
   if (isStreamersRoute) {
     return <StreamersPage />;
   }
+  if (isSponsorsRoute) {
+    return <SponsorsPage />;
+  }
 
   return (
     <div className="font-body min-h-screen w-full bg-[#0a0e1a] text-[#f5f1e8] relative overflow-hidden">
@@ -260,6 +268,8 @@ export default function App() {
           <ComingSoon kind={view} onBack={() => setView("landing")} />
         )}
       </div>
+
+      {view === "landing" && <SiteFooter />}
 
       {submitted && (
         <SubmissionToast data={submitted} onDismiss={() => setSubmitted(null)} />
@@ -341,6 +351,15 @@ function Landing({ onPick }) {
       icon: Radio,
       live: true,
       href: "/streamers",
+      accent: "yellow",
+    },
+    {
+      key: "sponsors",
+      label: "Sponsors",
+      sub: "Our partners — and how to become one",
+      icon: Handshake,
+      live: true,
+      href: "/sponsors",
       accent: "yellow",
     },
   ];
