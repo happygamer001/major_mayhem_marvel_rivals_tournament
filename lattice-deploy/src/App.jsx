@@ -1,82 +1,61 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
-  PayPalScriptProvider,
-  PayPalButtons,
-} from "@paypal/react-paypal-js";
-import {
-  ChevronLeft,
-  ChevronRight,
+  Construction,
+  Hammer,
   Check,
   AlertTriangle,
-  Trophy,
-  Users,
-  User,
-  UserPlus,
-  Crown,
-  CreditCard,
-  Radio,
-  Hammer,
-  Construction,
-  Sparkles,
+  ChevronLeft,
   Lock,
-  ShieldCheck,
+  Trophy,
+  GripVertical,
+  Users,
+  Shield,
+  RotateCcw,
+  Crown,
+  Swords,
+  X,
+  RefreshCw,
+  Radio,
+  Star,
+  Trash2,
+  Plus,
+  ExternalLink,
+  UserCheck,
+  UserX,
   Handshake,
+  Pencil,
+  Mail,
 } from "lucide-react";
-import AdminPage from "./AdminPage.jsx";
-import BracketPage from "./BracketPage.jsx";
-import LeaderboardPage from "./LeaderboardPage.jsx";
-import StreamersPage from "./StreamersPage.jsx";
-import SponsorsPage from "./SponsorsPage.jsx";
-import SiteFooter from "./Footer.jsx";
 
-/* ──────────────────────────────────────────────────────────────
-   LATTICE OPEN TOURNAMENT — Major Mayhem
-   Frontend framework v0.1
-   - Landing → Registration → (conditional TOS branch) → Payment
-   - "Under Construction" tape persists until app is fully wired
-   ────────────────────────────────────────────────────────────── */
+/**
+ * /admin — mod-only tournament management page.
+ * Chunk 1 capability: drag-and-drop seeding of 16 teams into the bracket.
+ *
+ * Three states:
+ *   1. Not signed in            → Discord sign-in
+ *   2. Signed in, not a mod     → Unauthorized message
+ *   3. Signed in as mod         → Seeding interface
+ */
 
 const FONT_STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=Bungee&family=Manrope:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap');
-
   .font-display { font-family: 'Bungee', system-ui, sans-serif; letter-spacing: 0.02em; }
   .font-mono    { font-family: 'Space Mono', ui-monospace, monospace; }
   .font-body    { font-family: 'Manrope', system-ui, sans-serif; }
-
   .halftone {
     background-image: radial-gradient(circle at 1px 1px, rgba(251,191,36,0.07) 1px, transparent 0);
     background-size: 22px 22px;
   }
-  .grain {
-    background-image:
-      radial-gradient(circle at 20% 10%, rgba(251,191,36,0.05), transparent 40%),
-      radial-gradient(circle at 80% 90%, rgba(239,68,68,0.04), transparent 45%);
-  }
   .hazard-stripes {
-    background: repeating-linear-gradient(
-      -45deg,
-      #facc15 0,
-      #facc15 14px,
-      #0a0e1a 14px,
-      #0a0e1a 28px
-    );
+    background: repeating-linear-gradient(-45deg, #facc15 0, #facc15 14px, #0a0e1a 14px, #0a0e1a 28px);
   }
   @keyframes wobble {
-    0%, 100% { transform: rotate(11deg) translate(0, 0); }
-    25%      { transform: rotate(13deg) translate(-2px, 1px); }
-    50%      { transform: rotate(10deg) translate(1px, -1px); }
-    75%      { transform: rotate(12deg) translate(-1px, 0); }
+    0%, 100% { transform: rotate(11deg); }
+    25%      { transform: rotate(13deg); }
+    50%      { transform: rotate(10deg); }
+    75%      { transform: rotate(12deg); }
   }
   .tape-wobble { animation: wobble 4.4s ease-in-out infinite; }
-
-  @keyframes flicker {
-    0%, 100% { opacity: 1; }
-    47% { opacity: 1; }
-    48% { opacity: 0.6; }
-    49% { opacity: 1; }
-  }
-  .flicker { animation: flicker 6s infinite; }
-
   @keyframes slideUp {
     from { opacity: 0; transform: translateY(12px); }
     to   { opacity: 1; transform: translateY(0); }
@@ -84,201 +63,2651 @@ const FONT_STYLES = `
   .slide-up { animation: slideUp 0.35s ease-out both; }
 `;
 
-/* ────────────────────── DATA ────────────────────── */
-
-const RANKS = [
-  "Bronze",
-  "Silver",
-  "Gold",
-  "Platinum",
-  "Diamond",
-  "Grandmaster",
-  "Eternity",
-  "One Above All",
-  "Unranked / Just started",
-];
-
-const SERVERS = [
-  "NA East",
-  "NA Central",
-  "NA West",
-  "EU",
-  "Asia",
-  "OCE / SEA",
-  "South America",
-];
-
-/* TOS summaries — paraphrased from the project PDFs.
-   The full PDFs remain the authoritative legal documents. */
-const DISCORD_TOS = {
-  title: "Discord Server Terms",
-  version: "v1.0",
-  bullets: [
-    "Dedicated team voice + text chats are provisioned for every registered team and visible only to that team and the moderation staff.",
-    "The server hosts community guides, theory-crafting channels, and an opt-in cosmetic leaderboard updated the week of the event.",
-    "Streamers identified at registration receive official badges to display on their broadcasts.",
-    "Zero-tolerance policy: no gambling of any kind, and any harassment, hate speech, or bullying results in immediate removal.",
-    "Moderators reserve the right to remove any content or user that violates the spirit of an inclusive community.",
-  ],
-};
-
-const TOURNAMENT_TOS = {
-  title: "Casual Tournament Terms of Service",
-  version: "v1.1",
-  bullets: [
-    "By registering you agree to these terms. This is a casual-focused event — sportsmanship and positive interaction take precedence over high-stakes optimization.",
-    "All players need a Marvel Rivals account in good standing. Active bans on the game platform may result in disqualification.",
-    "Hate speech, harassment, intentional throwing, or griefing will result in an immediate and permanent ban from current and future events.",
-    "Disconnections: teams should wait up to 3 minutes for a reconnect. Matches will not be replayed for standard latency.",
-    "Refunds available up to 48 hours before the tournament. Inside 48 hours, refund eligibility follows the Random Player Matchmaking Agreement.",
-    "Organizers are not responsible for game server outages, platform-wide issues, or individual hardware failures.",
-  ],
-};
-
-const RPMA_TOS = {
-  title: "Random Player Matchmaking Agreement",
-  version: "v1.0",
-  bullets: [
-    "This agreement governs solo players and incomplete teams (fewer than 6). The tournament experience relies on cooperative play.",
-    "Reporting unsportsmanlike conduct is the responsibility of individual players and team captains. Verified reports may result in immediate disqualification without refund.",
-    "Matchmaking criteria: rank parity, registration preference / role, and confirmed availability during the matchmaking window.",
-    "Reserve players designate a primary team at registration, but may be re-routed on tournament day to fill any team needing a 6th.",
-    "Final matchmaking decisions are at the sole discretion of Tournament Moderators. Matchmaking opens 7 days prior to event start.",
-    "If your matched random player no-shows and no standby is available, your team may withdraw for a full refund — notify a Moderator immediately.",
-  ],
-};
-
-const BROADCAST_TOS = {
-  title: "Streaming & Media Release",
-  version: "v1.0",
-  bullets: [
-    "Tournament Organizers hold the primary right to broadcast the event. The tournament will stream live and may be recorded for promotional use.",
-    "Spectator accounts belonging to organizers and casters may join any match. Your IGN, hero choices, gameplay, and stats will be visible to the audience.",
-    "Players may be invited to voluntary pre/post-match interviews. Participating grants permission to broadcast your voice and (if camera is on) likeness.",
-    "You may stream your own POV. A 3-minute minimum delay is strongly recommended to prevent stream sniping.",
-    "You grant a non-exclusive, worldwide, royalty-free license to use captured footage and audio for broadcast, highlight reels, and social promotion.",
-  ],
-};
-
-const PER_MEMBER_FEE_USD = 5; // entry fee = teamSize × $5
-
-/**
- * Compute the entry fee based on team composition.
- *   solo        → 1 × $5 = $5
- *   partial     → partialMemberCount × $5 (2–5)
- *   full        → 6 × $5 = $30
- */
-function computeFee({ teamType, partialMemberCount }) {
-  const seats =
-    teamType === "solo"
-      ? 1
-      : teamType === "full"
-      ? 6
-      : teamType === "partial"
-      ? Number(partialMemberCount) || 0
-      : 0;
-  return { seats, total: seats * PER_MEMBER_FEE_USD };
-}
-
-/* ────────────────────── ROOT ────────────────────── */
-
-export default function App() {
-  // Determine route from pathname. Done as a const (not state) because the
-  // path doesn't change without a full page navigation, so we don't need to
-  // re-render on path changes.
-  const isAdminRoute =
-    typeof window !== "undefined" && window.location.pathname === "/admin";
-  const isBracketRoute =
-    typeof window !== "undefined" && window.location.pathname === "/bracket";
-  const isLeaderboardRoute =
-    typeof window !== "undefined" && window.location.pathname === "/leaderboard";
-  const isStreamersRoute =
-    typeof window !== "undefined" && window.location.pathname === "/streamers";
-  const isSponsorsRoute =
-    typeof window !== "undefined" && window.location.pathname === "/sponsors";
-
-  const [view, setView] = useState("landing"); // landing | register | brackets | leaderboards | streamers
-  const [submitted, setSubmitted] = useState(null);
+export default function AdminPage() {
   const [authToken, setAuthToken] = useState(null);
-  const [discordIdentity, setDiscordIdentity] = useState(null); // { id, username }
+  const [discordIdentity, setDiscordIdentity] = useState(null);
+  const [modStatus, setModStatus] = useState("checking"); // checking | mod | not_mod | error
+  const [modInfo, setModInfo] = useState(null);
 
-  // Pick up auth token after Discord OAuth callback redirects us back here.
-  // The callback redirects to /?auth=<jwt>#/register — we read the token,
-  // strip it from the URL, decode the (unverified-here) payload to display
-  // the username, and jump straight into registration.
+  // Same auth-token pickup as the registration flow
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const token = params.get("auth");
     if (token) {
       setAuthToken(token);
-      // Decode without verifying — we only show the username. The server
-      // re-verifies the JWT on submission, so client trust isn't an issue.
       try {
-        const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
-        setDiscordIdentity({ id: payload.sub, username: payload.global_name || payload.username });
+        const payload = JSON.parse(
+          atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))
+        );
+        setDiscordIdentity({
+          id: payload.sub,
+          username: payload.global_name || payload.username,
+        });
       } catch (e) {
         console.error("Could not decode auth token:", e);
       }
-      // Clean the URL — remove ?auth=... and any hash
-      window.history.replaceState({}, "", window.location.pathname);
-      setView("register");
+      // Strip the auth param from URL but keep us on /admin
+      window.history.replaceState({}, "", "/admin");
     }
   }, []);
 
-  // Early return for /admin route. All hooks above this line run regardless,
-  // satisfying React's rules-of-hooks even though we don't use them on /admin.
-  if (isAdminRoute) {
-    return <AdminPage />;
-  }
-  if (isBracketRoute) {
-    return <BracketPage />;
-  }
-  if (isLeaderboardRoute) {
-    return <LeaderboardPage />;
-  }
-  if (isStreamersRoute) {
-    return <StreamersPage />;
-  }
-  if (isSponsorsRoute) {
-    return <SponsorsPage />;
-  }
+  // Once we have an auth token, check if user is a mod
+  useEffect(() => {
+    if (!authToken) {
+      setModStatus("checking");
+      return;
+    }
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ authToken }),
+        });
+        const result = await res.json();
+        if (!result.ok) {
+          setModStatus("error");
+          return;
+        }
+        if (result.isMod) {
+          setModInfo(result);
+          setModStatus("mod");
+        } else {
+          setModStatus("not_mod");
+        }
+      } catch (err) {
+        console.error("Mod check failed:", err);
+        setModStatus("error");
+      }
+    })();
+  }, [authToken]);
+
+  const goHome = () => {
+    window.location.href = "/";
+  };
+  const signIn = () => {
+    // Use a state param so OAuth callback knows to return us to /admin
+    window.location.href = "/api/discord/auth?return_to=admin";
+  };
 
   return (
     <div className="font-body min-h-screen w-full bg-[#0a0e1a] text-[#f5f1e8] relative overflow-hidden">
       <style>{FONT_STYLES}</style>
       <div className="absolute inset-0 halftone pointer-events-none" />
-      <div className="absolute inset-0 grain pointer-events-none" />
-
       <UnderConstructionTape />
 
       <div className="relative z-10">
-        {view === "landing" && <Landing onPick={(v) => setView(v)} />}
-        {view === "register" && (
-          <Registration
-            authToken={authToken}
-            discordIdentity={discordIdentity}
-            onBack={() => setView("landing")}
-            onComplete={(data) => {
-              setSubmitted(data);
-              setView("landing");
-            }}
-          />
-        )}
-        {(view === "brackets" || view === "leaderboards" || view === "streamers") && (
-          <ComingSoon kind={view} onBack={() => setView("landing")} />
-        )}
+        <main className="max-w-5xl mx-auto px-6 sm:px-10 pt-16 pb-24">
+          <button
+            onClick={goHome}
+            className="font-mono text-xs text-[#c8c2b3] hover:text-yellow-400 flex items-center gap-1.5 tracking-wider mb-6"
+          >
+            <ChevronLeft className="w-4 h-4" /> BACK TO HOME
+          </button>
+
+          <header className="mb-10">
+            <div className="font-mono text-xs text-yellow-400 mb-2 tracking-widest">
+              / / TOURNAMENT ADMIN
+            </div>
+            <h1
+              className="font-display text-4xl sm:text-5xl text-[#f5f1e8]"
+              style={{ textShadow: "3px 3px 0 #facc15, 6px 6px 0 #ef4444" }}
+            >
+              MISSION
+              <br />
+              <span className="text-yellow-400">CONTROL</span>
+            </h1>
+          </header>
+
+          {!authToken && <SignInPrompt onSignIn={signIn} />}
+          {authToken && modStatus === "checking" && <CheckingState />}
+          {authToken && modStatus === "not_mod" && (
+            <NotAuthorizedState identity={discordIdentity} onHome={goHome} />
+          )}
+          {authToken && modStatus === "error" && <ErrorState onRetry={() => window.location.reload()} />}
+          {authToken && modStatus === "mod" && (
+            <ModDashboard
+              authToken={authToken}
+              identity={discordIdentity}
+              modInfo={modInfo}
+            />
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────── STATE COMPONENTS ────────────────────── */
+
+function SignInPrompt({ onSignIn }) {
+  return (
+    <section className="slide-up max-w-xl">
+      <div className="border-2 border-[#5865F2]/40 bg-[#131a2a] p-8">
+        <Lock className="w-10 h-10 text-yellow-400 mb-4" />
+        <h2 className="font-display text-2xl mb-2">Mods only.</h2>
+        <p className="font-body text-[#c8c2b3] mb-6 leading-relaxed">
+          This area is restricted to Tournament Organizers. Sign in with
+          Discord and we'll check whether you have access.
+        </p>
+        <button
+          onClick={onSignIn}
+          className="bg-[#5865F2] hover:bg-[#4752c4] text-white font-display py-3 px-6 transition-colors"
+        >
+          SIGN IN WITH DISCORD
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function CheckingState() {
+  return (
+    <div className="font-mono text-sm text-[#c8c2b3] animate-pulse">
+      Verifying mod status…
+    </div>
+  );
+}
+
+function ErrorState({ onRetry }) {
+  return (
+    <div className="border-l-4 border-red-500 bg-red-500/10 p-4 max-w-xl">
+      <div className="font-display text-lg mb-1">Something went wrong</div>
+      <p className="font-body text-sm text-red-300 mb-4">
+        We couldn't verify your mod status. This is usually a temporary
+        connectivity issue.
+      </p>
+      <button
+        onClick={onRetry}
+        className="font-mono text-xs px-3 py-2 border border-red-300 text-red-300 hover:bg-red-500/20"
+      >
+        RETRY
+      </button>
+    </div>
+  );
+}
+
+function NotAuthorizedState({ identity, onHome }) {
+  return (
+    <section className="slide-up max-w-xl">
+      <div className="border-2 border-yellow-400/30 bg-[#131a2a] p-8">
+        <AlertTriangle className="w-10 h-10 text-yellow-400 mb-4" />
+        <h2 className="font-display text-2xl mb-2">Not on the mod list.</h2>
+        <p className="font-body text-[#c8c2b3] mb-2">
+          You're signed in as{" "}
+          <span className="font-mono text-yellow-300">
+            @{identity?.username}
+          </span>
+          , but this Discord account isn't authorized to access the admin area.
+        </p>
+        <p className="font-body text-sm text-[#6b7280] mb-6">
+          If you believe this is a mistake, contact a Tournament Organizer to
+          have your Discord ID added to the mod list.
+        </p>
+        <button
+          onClick={onHome}
+          className="font-mono text-xs px-4 py-2 border border-[#c8c2b3] text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400"
+        >
+          BACK TO HOME
+        </button>
+      </div>
+    </section>
+  );
+}
+
+/* ────────────────────── MOD DASHBOARD (CHUNK 1: SEEDING) ────────────────────── */
+
+function ModDashboard({ authToken, identity, modInfo }) {
+  const [bracket, setBracket] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [forceSeedView, setForceSeedView] = useState(false);
+  const [activeTab, setActiveTab] = useState("bracket"); // "bracket" | "streamers"
+
+  const fetchBracket = useCallback(async () => {
+    try {
+      const res = await fetch("/api/bracket");
+      const result = await res.json();
+      if (!result.ok) {
+        setError(result.error || "Could not load bracket.");
+        setLoading(false);
+        return;
+      }
+      setBracket(result.bracket || []);
+      setError(null);
+      setLoading(false);
+    } catch (err) {
+      setError("Network error loading bracket.");
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBracket();
+  }, [fetchBracket]);
+
+  // Poll every 10 seconds while page is open (so multi-mod ops stay in sync).
+  // Only poll when the bracket tab is active — streamer hub has its own polling.
+  useEffect(() => {
+    if (loading || error || activeTab !== "bracket") return;
+    const interval = setInterval(fetchBracket, 10000);
+    return () => clearInterval(interval);
+  }, [loading, error, fetchBracket, activeTab]);
+
+  const showSeedingView = forceSeedView || !bracket || bracket.length === 0;
+
+  return (
+    <section className="slide-up">
+      <div className="border-2 border-green-400/30 bg-[#131a2a] p-4 mb-6 flex items-center gap-3">
+        <Shield className="w-5 h-5 text-green-400" />
+        <div>
+          <div className="font-mono text-xs text-green-300">AUTHORIZED</div>
+          <div className="font-body text-sm text-[#f5f1e8]">
+            <span className="font-mono text-yellow-300">@{identity?.username}</span> ·{" "}
+            <span className="text-[#c8c2b3]">{modInfo?.role || "mod"}</span>
+          </div>
+        </div>
       </div>
 
-      {view === "landing" && <SiteFooter />}
+      {/* Tab navigation */}
+      <div className="flex items-center gap-2 mb-6 border-b border-[#f5f1e8]/15">
+        <TabButton
+          active={activeTab === "bracket"}
+          onClick={() => setActiveTab("bracket")}
+        >
+          BRACKET
+        </TabButton>
+        <TabButton
+          active={activeTab === "streamers"}
+          onClick={() => setActiveTab("streamers")}
+        >
+          STREAMER HUB
+        </TabButton>
+        <TabButton
+          active={activeTab === "sponsors"}
+          onClick={() => setActiveTab("sponsors")}
+        >
+          SPONSORS
+        </TabButton>
+      </div>
 
-      {submitted && (
-        <SubmissionToast data={submitted} onDismiss={() => setSubmitted(null)} />
+      {activeTab === "bracket" && (
+        <>
+          {loading && (
+            <div className="font-mono text-sm text-[#c8c2b3] animate-pulse">
+              Loading bracket state…
+            </div>
+          )}
+
+          {!loading && error && (
+            <div className="border-l-4 border-red-500 bg-red-500/10 p-4 max-w-xl">
+              <div className="font-display text-lg mb-1">Couldn't load bracket</div>
+              <p className="font-body text-sm text-red-300 mb-4">{error}</p>
+              <button
+                onClick={fetchBracket}
+                className="font-mono text-xs px-3 py-2 border border-red-300 text-red-300 hover:bg-red-500/20"
+              >
+                RETRY
+              </button>
+            </div>
+          )}
+
+          {!loading && !error && showSeedingView && (
+            <SeedingInterface
+              authToken={authToken}
+              onSeeded={() => {
+                setForceSeedView(false);
+                fetchBracket();
+              }}
+            />
+          )}
+
+          {!loading && !error && !showSeedingView && (
+            <MatchManagement
+              authToken={authToken}
+              identity={identity}
+              bracket={bracket}
+              onChanged={fetchBracket}
+              onResetBracket={() => setForceSeedView(true)}
+            />
+          )}
+        </>
+      )}
+
+      {activeTab === "streamers" && (
+        <StreamerHubAdmin authToken={authToken} identity={identity} />
+      )}
+
+      {activeTab === "sponsors" && (
+        <SponsorsAdmin authToken={authToken} identity={identity} />
+      )}
+    </section>
+  );
+}
+
+function TabButton({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`font-mono text-xs tracking-widest px-4 py-2 border-b-2 -mb-px transition-colors ${
+        active
+          ? "border-yellow-400 text-yellow-400"
+          : "border-transparent text-[#c8c2b3] hover:text-[#f5f1e8]"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Drag-and-drop team ordering for bracket initialization.
+ *
+ * For Chunk 1 we keep this minimal: mods enter team data manually as 16 lines
+ * of "TeamID:TeamName" pairs (one per line) and click "Initialize Bracket."
+ * The drag-and-drop UI for ordering registered teams will land in a polish
+ * pass — for now we ship the data-entry version so the data-model end-to-end
+ * is testable.
+ */
+function SeedingInterface({ authToken, onSeeded }) {
+  const [rawInput, setRawInput] = useState("");
+  const [status, setStatus] = useState("idle"); // idle | submitting | success | error
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const parsed = parseTeams(rawInput);
+
+  const handleSubmit = async () => {
+    setErrorMsg("");
+    if (parsed.error) {
+      setErrorMsg(parsed.error);
+      return;
+    }
+    setStatus("submitting");
+    try {
+      const res = await fetch("/api/admin/init-bracket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          authToken,
+          seededTeams: parsed.teams,
+        }),
+      });
+      const result = await res.json();
+      if (!result.ok) {
+        setStatus("error");
+        setErrorMsg(result.error || "Initialization failed.");
+        return;
+      }
+      setStatus("success");
+      // Small delay so the success message is visible before swap
+      setTimeout(() => {
+        if (typeof onSeeded === "function") onSeeded();
+      }, 800);
+    } catch (err) {
+      setStatus("error");
+      setErrorMsg("Network error. Try again.");
+    }
+  };
+
+  return (
+    <div>
+      <div className="mb-6 flex items-center gap-2 font-mono text-xs text-yellow-300">
+        <Trophy className="w-4 h-4" />
+        BRACKET SEEDING · DOUBLE ELIMINATION · 16 TEAMS
+      </div>
+
+      <h2 className="font-display text-3xl mb-2">Seed the bracket</h2>
+      <p className="font-body text-[#c8c2b3] mb-8 max-w-2xl">
+        Enter your teams in seed order, one per line in the format{" "}
+        <code className="font-mono text-yellow-300 bg-[#0a0e1a] px-1.5 py-0.5">
+          TeamID:Team Name
+        </code>
+        . Up to 16 teams. Any unused slots become BYEs — top seeds will
+        auto-advance through them. Pairs of consecutive lines play each other
+        in WB-R1.
+      </p>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2">
+          <label className="block">
+            <span className="font-mono text-[11px] text-[#c8c2b3] tracking-widest uppercase mb-1.5 block">
+              SEEDED TEAMS · 2 TO 16 LINES
+            </span>
+            <textarea
+              value={rawInput}
+              onChange={(e) => setRawInput(e.target.value)}
+              spellCheck={false}
+              rows={18}
+              placeholder={
+                "team-001:Apex Predators\n" +
+                "team-002:Cosmic Voyagers\n" +
+                "team-003:Quantum Heralds\n" +
+                "...\n(16 total)"
+              }
+              className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2.5 font-mono text-sm focus:outline-none focus:border-yellow-400 transition-colors placeholder:text-[#6b7280]"
+            />
+          </label>
+        </div>
+
+        <div className="border-2 border-[#f5f1e8]/15 bg-[#131a2a] p-4 self-start">
+          <div className="font-mono text-[10px] text-[#c8c2b3] tracking-widest mb-3">
+            LIVE PREVIEW
+          </div>
+          <div className="font-mono text-xs space-y-1 mb-4">
+            <div className="flex justify-between">
+              <span className="text-[#c8c2b3]">Teams entered:</span>
+              <span
+                className={
+                  parsed.teams.length >= 2 && parsed.teams.length <= 16
+                    ? "text-green-300"
+                    : "text-yellow-300"
+                }
+              >
+                {parsed.teams.length}
+              </span>
+            </div>
+            {parsed.teams.length > 0 && parsed.teams.length < 16 && (
+              <div className="flex justify-between">
+                <span className="text-[#c8c2b3]">BYEs added:</span>
+                <span className="text-yellow-300">{16 - parsed.teams.length}</span>
+              </div>
+            )}
+            {parsed.error && (
+              <div className="text-red-300 mt-2 leading-snug">
+                {parsed.error}
+              </div>
+            )}
+          </div>
+          {parsed.teams.length > 0 && (
+            <div className="space-y-1.5 max-h-80 overflow-y-auto">
+              {Array.from({ length: 8 }).map((_, i) => {
+                const a = parsed.teams[i * 2];
+                const b = parsed.teams[i * 2 + 1];
+                const isByeMatch = !a && !b;
+                return (
+                  <div
+                    key={i}
+                    className={`border p-2 ${
+                      isByeMatch
+                        ? "border-[#f5f1e8]/5 bg-[#0a0e1a]/40 opacity-50"
+                        : "border-[#f5f1e8]/10 bg-[#0a0e1a]"
+                    }`}
+                  >
+                    <div className="font-mono text-[9px] text-yellow-400 mb-1">
+                      WB-R1-M{i + 1}
+                    </div>
+                    <div className="text-xs truncate text-[#f5f1e8]">
+                      {a?.teamName || (
+                        <em className="text-yellow-400/60">(BYE)</em>
+                      )}
+                    </div>
+                    <div className="text-xs text-[#6b7280] my-0.5">vs.</div>
+                    <div className="text-xs truncate text-[#f5f1e8]">
+                      {b?.teamName || (
+                        <em className="text-yellow-400/60">(BYE)</em>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {errorMsg && (
+        <div className="mt-6 border-l-4 border-red-500 bg-red-500/10 p-3 font-body text-sm text-red-300">
+          {errorMsg}
+        </div>
+      )}
+
+      {status === "success" && (
+        <div className="mt-6 border-l-4 border-green-400 bg-green-400/10 p-3 font-body text-sm text-green-300 flex items-center gap-2">
+          <Check className="w-4 h-4" strokeWidth={3} />
+          Bracket initialized. The Bracket tab in your sheet now has all 31 matches.
+        </div>
+      )}
+
+      <div className="mt-6 flex items-center gap-3">
+        <button
+          onClick={handleSubmit}
+          disabled={status === "submitting" || parsed.teams.length < 2 || parsed.teams.length > 16}
+          className={`font-display px-7 py-3 border-2 transition-all flex items-center gap-2 ${
+            status !== "submitting" && parsed.teams.length >= 2 && parsed.teams.length <= 16
+              ? "bg-yellow-400 text-black border-yellow-400 hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_0_#ef4444] cursor-pointer"
+              : "bg-transparent text-[#6b7280] border-[#6b7280] cursor-not-allowed"
+          }`}
+        >
+          {status === "submitting" ? "INITIALIZING…" : "INITIALIZE BRACKET"}
+        </button>
+        <span className="font-mono text-[10px] text-[#6b7280]">
+          ⚠ Re-running this WIPES any in-progress bracket data
+        </span>
+      </div>
+
+      <div className="mt-12 border-l-4 border-yellow-400/60 bg-yellow-400/5 p-4 font-mono text-[11px] text-[#c8c2b3] leading-relaxed">
+        DEV NOTE (Chunk 1): seeding is text-input only for now. The
+        drag-and-drop interface that pulls registered teams from the
+        Registrations tab lands in a polish pass after Chunks 2-4. This minimal
+        version tests the data model end-to-end — bracket structure, mod auth,
+        progression metadata — before we invest in the fancy UI.
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────── MATCH MANAGEMENT (CHUNK 2) ────────────────────── */
+
+const ROUND_GROUPS = [
+  { id: "WB-R1", label: "Winners Bracket — Round 1", section: "wb" },
+  { id: "WB-QF", label: "Winners Bracket — Quarterfinals", section: "wb" },
+  { id: "WB-SF", label: "Winners Bracket — Semifinals", section: "wb" },
+  { id: "WB-F", label: "Winners Bracket — Final", section: "wb" },
+  { id: "LB-R1", label: "Losers Bracket — Round 1", section: "lb" },
+  { id: "LB-R2", label: "Losers Bracket — Round 2", section: "lb" },
+  { id: "LB-R3", label: "Losers Bracket — Round 3", section: "lb" },
+  { id: "LB-R4", label: "Losers Bracket — Round 4", section: "lb" },
+  { id: "LB-SF", label: "Losers Bracket — Semifinal", section: "lb" },
+  { id: "LB-F", label: "Losers Bracket — Final", section: "lb" },
+  { id: "GF-1", label: "Grand Finals — Match 1", section: "gf" },
+  { id: "GF-2", label: "Grand Finals — Match 2 (Reset)", section: "gf" },
+];
+
+function MatchManagement({
+  authToken,
+  identity,
+  bracket,
+  onChanged,
+  onResetBracket,
+}) {
+  const [resultModal, setResultModal] = useState(null); // { match }
+  const [revertModal, setRevertModal] = useState(null); // { match }
+  const [streamModal, setStreamModal] = useState(null); // { match }
+  const [confirmReset, setConfirmReset] = useState(false);
+
+  // Detect champion (a match with feeds_winner_to=CHAMPION and a winner_id)
+  const champion = bracket.find(
+    (m) =>
+      m.feeds_winner_to === "CHAMPION" &&
+      m.winner_id &&
+      m.status === "completed"
+  );
+  const championMatch = champion;
+  // Find their team label from the match
+  const championLabel =
+    championMatch &&
+    (championMatch.team_a_id === championMatch.winner_id
+      ? championMatch.team_a_label
+      : championMatch.team_b_label);
+
+  const groupedRounds = ROUND_GROUPS.map((rg) => ({
+    ...rg,
+    matches: bracket.filter((m) => m.round === rg.id),
+  })).filter((rg) => rg.matches.length > 0);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+        <div className="flex items-center gap-2 font-mono text-xs text-yellow-300">
+          <Swords className="w-4 h-4" />
+          MATCH MANAGEMENT · DOUBLE ELIMINATION
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onChanged}
+            className="font-mono text-[10px] tracking-wider px-3 py-1.5 border border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400 flex items-center gap-1.5"
+            title="Refresh bracket data"
+          >
+            <RefreshCw className="w-3 h-3" /> REFRESH
+          </button>
+          <button
+            onClick={() => setConfirmReset(true)}
+            className="font-mono text-[10px] tracking-wider px-3 py-1.5 border border-red-400/40 text-red-300 hover:bg-red-500/10"
+          >
+            RE-SEED BRACKET
+          </button>
+        </div>
+      </div>
+
+      {champion && championLabel && (
+        <div className="border-2 border-yellow-400 bg-gradient-to-r from-yellow-400/20 to-transparent p-6 mb-8">
+          <div className="flex items-center gap-3">
+            <Crown className="w-8 h-8 text-yellow-400" />
+            <div>
+              <div className="font-mono text-[11px] text-yellow-300 tracking-widest">
+                CHAMPION
+              </div>
+              <div
+                className="font-display text-3xl text-yellow-400"
+                style={{ textShadow: "2px 2px 0 #ef4444" }}
+              >
+                {championLabel}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-8">
+        {groupedRounds.map((rg) => (
+          <div key={rg.id}>
+            <h3 className="font-display text-lg mb-3 text-[#f5f1e8]">
+              {rg.label}
+              <span className="ml-2 font-mono text-xs text-[#6b7280]">
+                {rg.matches.filter((m) => m.status === "completed").length}/
+                {rg.matches.length} done
+              </span>
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {rg.matches.map((m) => (
+                <MatchCard
+                  key={m.match_id}
+                  match={m}
+                  onClickResult={() => setResultModal({ match: m })}
+                  onClickRevert={() => setRevertModal({ match: m })}
+                  onClickStream={() => setStreamModal({ match: m })}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {resultModal && (
+        <ResultModal
+          authToken={authToken}
+          match={resultModal.match}
+          onClose={() => setResultModal(null)}
+          onSuccess={() => {
+            setResultModal(null);
+            onChanged();
+          }}
+        />
+      )}
+
+      {revertModal && (
+        <RevertModal
+          authToken={authToken}
+          match={revertModal.match}
+          onClose={() => setRevertModal(null)}
+          onSuccess={() => {
+            setRevertModal(null);
+            onChanged();
+          }}
+        />
+      )}
+
+      {streamModal && (
+        <StreamModal
+          authToken={authToken}
+          match={streamModal.match}
+          onClose={() => setStreamModal(null)}
+          onSuccess={() => {
+            setStreamModal(null);
+            onChanged();
+          }}
+        />
+      )}
+
+      {confirmReset && (
+        <ModalShell onClose={() => setConfirmReset(false)} title="Re-seed bracket?">
+          <p className="font-body text-sm text-[#c8c2b3] mb-4 leading-relaxed">
+            This will <strong className="text-red-300">wipe all match results</strong>{" "}
+            and let you enter a new team list. The Bracket tab in your sheet
+            will be cleared. Audit log entries in the Matches tab are preserved.
+          </p>
+          <p className="font-mono text-[11px] text-yellow-300 mb-6">
+            Use this only if the tournament has been cancelled or you set up
+            the wrong teams. There is no undo.
+          </p>
+          <div className="flex gap-2 justify-end">
+            <button
+              onClick={() => setConfirmReset(false)}
+              className="font-mono text-xs px-4 py-2 border border-[#c8c2b3] text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400"
+            >
+              CANCEL
+            </button>
+            <button
+              onClick={() => {
+                setConfirmReset(false);
+                onResetBracket();
+              }}
+              className="font-mono text-xs px-4 py-2 bg-red-500/30 border border-red-400 text-red-200 hover:bg-red-500/50"
+            >
+              YES, WIPE & RE-SEED
+            </button>
+          </div>
+        </ModalShell>
       )}
     </div>
   );
 }
 
-/* ────────────────────── UNDER CONSTRUCTION ────────────────────── */
+function MatchCard({ match, onClickResult, onClickRevert, onClickStream }) {
+  const isCompleted = match.status === "completed";
+  const isBye = match.status === "completed-bye";
+  const isReady = match.status === "ready";
+  const isPending = match.status === "pending";
+  const hasStream = !!match.streaming_url;
+
+  const teamAIsBye = match.team_a_id === "__BYE__";
+  const teamBIsBye = match.team_b_id === "__BYE__";
+  const winnerIsA = isCompleted && match.winner_id === match.team_a_id;
+  const winnerIsB = isCompleted && match.winner_id === match.team_b_id;
+
+  // Stream button is available on ready (live now) and completed (set retroactively)
+  // matches that have real teams. Not for BYE matches or pending matches.
+  const canSetStream = (isReady || isCompleted) && !teamAIsBye && !teamBIsBye;
+
+  let statusBadge = null;
+  let borderClass = "border-[#f5f1e8]/15";
+  let interactionProps = {};
+
+  if (isPending) {
+    statusBadge = <StatusBox color="grey" label="WAITING" />;
+    borderClass = "border-[#f5f1e8]/10 opacity-60";
+  } else if (isReady) {
+    statusBadge = <StatusBox color="yellow" label="READY" />;
+    borderClass = hasStream
+      ? "border-red-400 cursor-pointer"
+      : "border-yellow-400/40 hover:border-yellow-400 cursor-pointer";
+    interactionProps = { onClick: onClickResult };
+  } else if (isCompleted) {
+    statusBadge = <StatusBox color="green" label="DONE" />;
+    borderClass = "border-green-400/30 hover:border-green-400 cursor-pointer";
+    interactionProps = { onClick: onClickRevert };
+  } else if (isBye) {
+    statusBadge = <StatusBox color="grey" label="BYE" />;
+    borderClass = "border-[#f5f1e8]/5 opacity-50";
+  }
+
+  const handleStreamClick = (e) => {
+    e.stopPropagation();
+    if (onClickStream) onClickStream();
+  };
+
+  return (
+    <div
+      {...interactionProps}
+      className={`bg-[#131a2a] border-2 ${borderClass} p-3 transition-colors`}
+    >
+      <div className="flex items-center justify-between mb-2 gap-1">
+        <div className="font-mono text-[10px] text-yellow-400 tracking-wider">
+          {match.match_id}
+        </div>
+        <div className="flex items-center gap-1">
+          {hasStream && (
+            <span
+              className="flex items-center gap-1 px-1.5 py-0.5 bg-red-500/30 border border-red-400"
+              title="Currently being broadcast"
+            >
+              <Radio className="w-2.5 h-2.5 text-red-200" />
+              <span className="font-mono text-[9px] text-red-200 tracking-wider">
+                LIVE
+              </span>
+            </span>
+          )}
+          {statusBadge}
+        </div>
+      </div>
+
+      <TeamRow
+        label={match.team_a_label || "—"}
+        score={isCompleted && match.team_a_score !== "" ? match.team_a_score : null}
+        isBye={teamAIsBye}
+        isWinner={winnerIsA}
+      />
+      <div className="text-[10px] text-[#6b7280] my-1 text-center font-mono">
+        vs.
+      </div>
+      <TeamRow
+        label={match.team_b_label || "—"}
+        score={isCompleted && match.team_b_score !== "" ? match.team_b_score : null}
+        isBye={teamBIsBye}
+        isWinner={winnerIsB}
+      />
+
+      <div className="mt-2 flex items-center justify-between gap-2">
+        {isReady && !teamAIsBye && !teamBIsBye && (
+          <span className="font-mono text-[9px] text-yellow-400/80">
+            ↳ click for result
+          </span>
+        )}
+        {isCompleted && (
+          <span className="font-mono text-[9px] text-green-400/80">
+            ↳ click to revert
+          </span>
+        )}
+        {!isReady && !isCompleted && <span />}
+
+        {canSetStream && (
+          <button
+            onClick={handleStreamClick}
+            className={`font-mono text-[9px] tracking-wider px-1.5 py-0.5 border transition-colors flex items-center gap-1 ${
+              hasStream
+                ? "bg-red-500/20 border-red-400 text-red-200 hover:bg-red-500/40"
+                : "border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400"
+            }`}
+            title={hasStream ? "Currently broadcasting — click to change/clear" : "Mark as broadcasting"}
+          >
+            <Radio className="w-2.5 h-2.5" />
+            {hasStream ? "EDIT" : "STREAM"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TeamRow({ label, score, isBye, isWinner }) {
+  return (
+    <div
+      className={`flex items-center justify-between px-2 py-1.5 ${
+        isWinner
+          ? "bg-yellow-400/15 border-l-2 border-yellow-400"
+          : "bg-[#0a0e1a]/60"
+      } ${isBye ? "opacity-50 italic" : ""}`}
+    >
+      <span
+        className={`text-sm truncate ${
+          isWinner ? "text-yellow-300 font-semibold" : "text-[#f5f1e8]"
+        }`}
+      >
+        {label}
+      </span>
+      {score !== null && score !== undefined && score !== "" && (
+        <span
+          className={`font-mono text-sm ${
+            isWinner ? "text-yellow-300" : "text-[#c8c2b3]"
+          }`}
+        >
+          {score}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function StatusBox({ color, label }) {
+  const colorMap = {
+    yellow: "bg-yellow-400/20 text-yellow-300 border-yellow-400/40",
+    green: "bg-green-400/15 text-green-300 border-green-400/40",
+    grey: "bg-[#f5f1e8]/5 text-[#6b7280] border-[#f5f1e8]/10",
+    red: "bg-red-500/15 text-red-300 border-red-400/40",
+  };
+  return (
+    <span
+      className={`font-mono text-[9px] px-1.5 py-0.5 border tracking-widest ${colorMap[color] || colorMap.grey}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function ResultModal({ authToken, match, onClose, onSuccess }) {
+  const [winnerId, setWinnerId] = useState("");
+  const [scoreA, setScoreA] = useState("");
+  const [scoreB, setScoreB] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const teamAIsBye = match.team_a_id === "__BYE__";
+  const teamBIsBye = match.team_b_id === "__BYE__";
+
+  // Score validation: if either is filled, both must be valid numbers and unequal
+  const aNum = scoreA !== "" ? Number(scoreA) : null;
+  const bNum = scoreB !== "" ? Number(scoreB) : null;
+  const bothFilled = aNum !== null && bNum !== null;
+  const eitherFilled = aNum !== null || bNum !== null;
+  let scoreError = null;
+  let scoreImpliedWinner = null;
+  if (eitherFilled && !bothFilled) {
+    scoreError = "Enter both scores or leave both empty.";
+  } else if (bothFilled) {
+    if (Number.isNaN(aNum) || Number.isNaN(bNum)) {
+      scoreError = "Scores must be numbers.";
+    } else if (aNum < 0 || bNum < 0) {
+      scoreError = "Scores can't be negative.";
+    } else if (aNum === bNum) {
+      scoreError = "Scores can't be tied.";
+    } else {
+      scoreImpliedWinner = aNum > bNum ? match.team_a_id : match.team_b_id;
+    }
+  }
+
+  // If user has entered scores AND picked a winner, they must agree
+  const winnerScoreMismatch =
+    winnerId && scoreImpliedWinner && winnerId !== scoreImpliedWinner;
+
+  const canSubmit =
+    !submitting &&
+    winnerId &&
+    !scoreError &&
+    !winnerScoreMismatch &&
+    !teamAIsBye &&
+    !teamBIsBye;
+
+  const handleSubmit = async () => {
+    setError("");
+    setSubmitting(true);
+    try {
+      const body = {
+        authToken,
+        matchId: match.match_id,
+        winnerId,
+        notes,
+      };
+      if (bothFilled) {
+        body.teamAScore = aNum;
+        body.teamBScore = bNum;
+      }
+      const res = await fetch("/api/admin/submit-result", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const result = await res.json();
+      if (!result.ok) {
+        setError(result.error || "Submission failed.");
+        setSubmitting(false);
+        return;
+      }
+      onSuccess();
+    } catch (err) {
+      setError("Network error. Try again.");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <ModalShell onClose={onClose} title={`Enter result · ${match.match_id}`}>
+      {(teamAIsBye || teamBIsBye) && (
+        <div className="border-l-4 border-yellow-400 bg-yellow-400/10 p-3 mb-4 font-mono text-xs text-yellow-200">
+          This match contains a BYE and should have auto-resolved. If you're
+          seeing it as "ready", refresh the page first.
+        </div>
+      )}
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">WINNER</div>
+      <div className="space-y-2 mb-5">
+        <WinnerOption
+          label={match.team_a_label}
+          isBye={teamAIsBye}
+          selected={winnerId === match.team_a_id}
+          onSelect={() => setWinnerId(match.team_a_id)}
+        />
+        <WinnerOption
+          label={match.team_b_label}
+          isBye={teamBIsBye}
+          selected={winnerId === match.team_b_id}
+          onSelect={() => setWinnerId(match.team_b_id)}
+        />
+      </div>
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">
+        SERIES SCORE <span className="text-[#6b7280]">(optional)</span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 mb-2">
+        <div>
+          <div className="text-xs text-[#c8c2b3] truncate mb-1">
+            {match.team_a_label}
+          </div>
+          <input
+            type="number"
+            min="0"
+            value={scoreA}
+            onChange={(e) => setScoreA(e.target.value)}
+            placeholder="—"
+            className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400"
+          />
+        </div>
+        <div>
+          <div className="text-xs text-[#c8c2b3] truncate mb-1">
+            {match.team_b_label}
+          </div>
+          <input
+            type="number"
+            min="0"
+            value={scoreB}
+            onChange={(e) => setScoreB(e.target.value)}
+            placeholder="—"
+            className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400"
+          />
+        </div>
+      </div>
+      {scoreError && (
+        <div className="font-mono text-[11px] text-red-300 mb-3">
+          {scoreError}
+        </div>
+      )}
+      {winnerScoreMismatch && (
+        <div className="font-mono text-[11px] text-red-300 mb-3">
+          Score implies a different winner than the one you picked.
+        </div>
+      )}
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mt-3 mb-1">
+        NOTES <span className="text-[#6b7280]">(optional)</span>
+      </div>
+      <textarea
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        rows={2}
+        placeholder="Forfeit, DQ, etc."
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-xs focus:outline-none focus:border-yellow-400 mb-4"
+      />
+
+      {error && (
+        <div className="border-l-4 border-red-500 bg-red-500/10 p-3 font-mono text-xs text-red-300 mb-4">
+          {error}
+        </div>
+      )}
+
+      <div className="flex gap-2 justify-end">
+        <button
+          onClick={onClose}
+          disabled={submitting}
+          className="font-mono text-xs px-4 py-2 border border-[#c8c2b3] text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400 disabled:opacity-50"
+        >
+          CANCEL
+        </button>
+        <button
+          onClick={handleSubmit}
+          disabled={!canSubmit}
+          className={`font-display px-5 py-2 border-2 transition-all ${
+            canSubmit
+              ? "bg-yellow-400 text-black border-yellow-400 hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_0_#ef4444]"
+              : "bg-transparent text-[#6b7280] border-[#6b7280] cursor-not-allowed"
+          }`}
+        >
+          {submitting ? "SUBMITTING…" : "SUBMIT RESULT"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function WinnerOption({ label, isBye, selected, onSelect }) {
+  return (
+    <button
+      onClick={onSelect}
+      disabled={isBye}
+      className={`w-full text-left px-3 py-2 border-2 transition-colors flex items-center gap-2 ${
+        selected
+          ? "bg-yellow-400/15 border-yellow-400 text-yellow-200"
+          : isBye
+          ? "border-[#f5f1e8]/5 bg-[#0a0e1a]/40 text-[#6b7280] italic cursor-not-allowed"
+          : "border-[#f5f1e8]/15 bg-[#0a0e1a] text-[#f5f1e8] hover:border-yellow-400/60"
+      }`}
+    >
+      {selected && <Check className="w-3 h-3" strokeWidth={3} />}
+      <span className="text-sm truncate">{label}</span>
+    </button>
+  );
+}
+
+function RevertModal({ authToken, match, onClose, onSuccess }) {
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const winnerLabel =
+    match.winner_id === match.team_a_id
+      ? match.team_a_label
+      : match.team_b_label;
+  const scoreText =
+    match.team_a_score !== "" && match.team_b_score !== ""
+      ? `${match.team_a_label} ${match.team_a_score} – ${match.team_b_score} ${match.team_b_label}`
+      : `Winner: ${winnerLabel}`;
+
+  const handleRevert = async () => {
+    setError("");
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/revert-result", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          authToken,
+          matchId: match.match_id,
+          notes,
+        }),
+      });
+      const result = await res.json();
+      if (!result.ok) {
+        setError(result.error || "Revert failed.");
+        setSubmitting(false);
+        return;
+      }
+      onSuccess();
+    } catch (err) {
+      setError("Network error. Try again.");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <ModalShell onClose={onClose} title={`Revert result · ${match.match_id}`}>
+      <div className="border-l-4 border-yellow-400 bg-yellow-400/10 p-3 mb-4">
+        <div className="font-mono text-[11px] text-yellow-200 mb-1">
+          CURRENT RESULT
+        </div>
+        <div className="font-body text-sm text-[#f5f1e8]">{scoreText}</div>
+      </div>
+
+      <p className="font-body text-sm text-[#c8c2b3] mb-4 leading-relaxed">
+        Reverting this match clears the result and resets the next round's slots.
+        If any downstream match is already completed, the revert will be refused
+        — you'll need to revert downstream matches first.
+      </p>
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">
+        REASON <span className="text-[#6b7280]">(optional, logged)</span>
+      </div>
+      <textarea
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        rows={2}
+        placeholder="Wrong winner entered, score corrected, etc."
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-xs focus:outline-none focus:border-yellow-400 mb-4"
+      />
+
+      {error && (
+        <div className="border-l-4 border-red-500 bg-red-500/10 p-3 font-mono text-xs text-red-300 mb-4">
+          {error}
+        </div>
+      )}
+
+      <div className="flex gap-2 justify-end">
+        <button
+          onClick={onClose}
+          disabled={submitting}
+          className="font-mono text-xs px-4 py-2 border border-[#c8c2b3] text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400 disabled:opacity-50"
+        >
+          CANCEL
+        </button>
+        <button
+          onClick={handleRevert}
+          disabled={submitting}
+          className="font-mono text-xs px-4 py-2 bg-red-500/30 border border-red-400 text-red-200 hover:bg-red-500/50 flex items-center gap-1.5"
+        >
+          <RotateCcw className="w-3 h-3" />
+          {submitting ? "REVERTING…" : "REVERT RESULT"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function StreamModal({ authToken, match, onClose, onSuccess }) {
+  const [url, setUrl] = useState(match.streaming_url || "");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const hasExisting = !!match.streaming_url;
+  const trimmed = url.trim();
+  const isValid = !trimmed || /^https?:\/\//i.test(trimmed);
+  const willClear = !trimmed && hasExisting;
+
+  const submit = async (newUrl) => {
+    setError("");
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/set-stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          authToken,
+          matchId: match.match_id,
+          url: newUrl,
+        }),
+      });
+      const result = await res.json();
+      if (!result.ok) {
+        setError(result.error || "Could not save stream URL.");
+        setSubmitting(false);
+        return;
+      }
+      onSuccess();
+    } catch (err) {
+      setError("Network error. Try again.");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <ModalShell onClose={onClose} title={`Stream URL · ${match.match_id}`}>
+      <p className="font-body text-sm text-[#c8c2b3] mb-4 leading-relaxed">
+        Paste the URL of the live broadcast for this match. The bracket page
+        will show a "🔴 LIVE" badge that links here. The URL clears
+        automatically when this match completes.
+      </p>
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">
+        BROADCAST URL
+      </div>
+      <input
+        type="url"
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        placeholder="https://twitch.tv/major_mayhem"
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400 mb-2"
+      />
+      {!isValid && (
+        <div className="font-mono text-[11px] text-red-300 mb-3">
+          URL must start with http:// or https://
+        </div>
+      )}
+
+      {error && (
+        <div className="border-l-4 border-red-500 bg-red-500/10 p-3 font-mono text-xs text-red-300 mb-4">
+          {error}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2 justify-end mt-4">
+        <button
+          onClick={onClose}
+          disabled={submitting}
+          className="font-mono text-xs px-4 py-2 border border-[#c8c2b3] text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400 disabled:opacity-50"
+        >
+          CANCEL
+        </button>
+        {hasExisting && (
+          <button
+            onClick={() => submit("")}
+            disabled={submitting}
+            className="font-mono text-xs px-4 py-2 bg-red-500/30 border border-red-400 text-red-200 hover:bg-red-500/50 disabled:opacity-50"
+            title="Clear the live indicator"
+          >
+            CLEAR
+          </button>
+        )}
+        <button
+          onClick={() => submit(trimmed)}
+          disabled={submitting || !isValid || (!trimmed && !hasExisting)}
+          className={`font-display px-5 py-2 border-2 transition-all ${
+            !submitting && isValid && (trimmed || willClear)
+              ? "bg-yellow-400 text-black border-yellow-400 hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_0_#ef4444]"
+              : "bg-transparent text-[#6b7280] border-[#6b7280] cursor-not-allowed"
+          }`}
+        >
+          {submitting ? "SAVING…" : hasExisting ? "UPDATE" : "GO LIVE"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function ModalShell({ children, onClose, title }) {
+  // Close on Escape key
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[#131a2a] border-2 border-yellow-400/30 max-w-md w-full p-6 max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4 pb-3 border-b border-[#f5f1e8]/15">
+          <h3 className="font-display text-lg text-[#f5f1e8]">{title}</h3>
+          <button
+            onClick={onClose}
+            className="text-[#c8c2b3] hover:text-yellow-400"
+            aria-label="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────── STREAMER HUB ADMIN ──────────────────────────── */
+
+function StreamerHubAdmin({ authToken, identity }) {
+  const [streamers, setStreamers] = useState(null);
+  const [clips, setClips] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [busyId, setBusyId] = useState(""); // tracks per-row busy state
+  const [addClipOpen, setAddClipOpen] = useState(false);
+
+  const fetchAll = useCallback(async () => {
+    setError(null);
+    try {
+      const [sRes, cRes] = await Promise.all([
+        fetch("/api/admin/streamers/list", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ authToken }),
+        }),
+        fetch("/api/admin/clips/list", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ authToken }),
+        }),
+      ]);
+      const sData = await sRes.json();
+      const cData = await cRes.json();
+      if (!sData.ok) {
+        setError(String(sData.error || "Could not load streamers."));
+        setLoading(false);
+        return;
+      }
+      setStreamers(Array.isArray(sData.streamers) ? sData.streamers : []);
+      setClips(cData.ok && Array.isArray(cData.clips) ? cData.clips : []);
+      setLoading(false);
+    } catch (err) {
+      setError("Network error.");
+      setLoading(false);
+    }
+  }, [authToken]);
+
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
+
+  const handleDecision = async (discordId, decision) => {
+    setBusyId(discordId);
+    try {
+      const res = await fetch("/api/admin/streamers/decision", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ authToken, discordId, decision }),
+      });
+      const result = await res.json();
+      if (!result.ok) {
+        setError(String(result.error || "Action failed."));
+      }
+      await fetchAll();
+    } catch (err) {
+      setError("Network error.");
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const handleToggleFeatured = async (discordId) => {
+    setBusyId(discordId);
+    try {
+      const res = await fetch("/api/admin/streamers/feature", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ authToken, discordId }),
+      });
+      const result = await res.json();
+      if (!result.ok) {
+        setError(String(result.error || "Action failed."));
+      }
+      await fetchAll();
+    } catch (err) {
+      setError("Network error.");
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const handleClipAction = async (clipUrl, action) => {
+    setBusyId(clipUrl);
+    try {
+      const res = await fetch("/api/admin/clips/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ authToken, clipUrl, action }),
+      });
+      const result = await res.json();
+      if (!result.ok) {
+        setError(String(result.error || "Action failed."));
+      }
+      await fetchAll();
+    } catch (err) {
+      setError("Network error.");
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="font-mono text-sm text-[#c8c2b3] animate-pulse">
+        Loading streamer hub…
+      </div>
+    );
+  }
+
+  if (error && !streamers) {
+    return (
+      <div className="border-l-4 border-red-500 bg-red-500/10 p-4 max-w-xl">
+        <div className="font-display text-lg mb-1">Couldn't load hub</div>
+        <p className="font-body text-sm text-red-300 mb-4">{String(error)}</p>
+        <button
+          onClick={fetchAll}
+          className="font-mono text-xs px-3 py-2 border border-red-300 text-red-300 hover:bg-red-500/20"
+        >
+          RETRY
+        </button>
+      </div>
+    );
+  }
+
+  const pending = streamers.filter((s) => s.status === "pending");
+  const approved = streamers.filter((s) => s.status === "approved");
+  const rejected = streamers.filter((s) => s.status === "rejected");
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+        <div>
+          <div className="font-mono text-xs text-yellow-400 tracking-widest mb-1">
+            STREAMER HUB
+          </div>
+          <div className="font-display text-2xl text-[#f5f1e8]">
+            Application Queue
+          </div>
+        </div>
+        <button
+          onClick={fetchAll}
+          className="font-mono text-xs tracking-wider px-3 py-2 border border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400 flex items-center gap-1.5"
+        >
+          <RefreshCw className="w-3 h-3" /> REFRESH
+        </button>
+      </div>
+
+      {error && (
+        <div className="border-l-4 border-red-500 bg-red-500/10 p-3 mb-4 font-mono text-xs text-red-300 max-w-xl">
+          {String(error)}
+        </div>
+      )}
+
+      {/* PENDING APPLICATIONS */}
+      <section className="mb-10">
+        <div className="font-mono text-[11px] text-yellow-300 tracking-widest mb-3 flex items-center gap-2">
+          PENDING APPLICATIONS
+          <span className="text-[#6b7280]">({pending.length})</span>
+        </div>
+        {pending.length === 0 ? (
+          <div className="font-body text-sm text-[#c8c2b3] italic">
+            No applications waiting for review.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {pending.map((s) => (
+              <StreamerRow
+                key={String(s.discordId)}
+                streamer={s}
+                section="pending"
+                busy={busyId === s.discordId}
+                onApprove={() => handleDecision(s.discordId, "approve")}
+                onReject={() => handleDecision(s.discordId, "reject")}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* APPROVED STREAMERS */}
+      <section className="mb-10">
+        <div className="font-mono text-[11px] text-green-300 tracking-widest mb-3 flex items-center gap-2">
+          APPROVED STREAMERS
+          <span className="text-[#6b7280]">({approved.length})</span>
+        </div>
+        {approved.length === 0 ? (
+          <div className="font-body text-sm text-[#c8c2b3] italic">
+            No approved streamers yet.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {approved.map((s) => (
+              <StreamerRow
+                key={String(s.discordId)}
+                streamer={s}
+                section="approved"
+                busy={busyId === s.discordId}
+                onToggleFeatured={() => handleToggleFeatured(s.discordId)}
+                onReject={() => handleDecision(s.discordId, "reject")}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* REJECTED — collapsed by default visually (just a faint list) */}
+      {rejected.length > 0 && (
+        <section className="mb-10">
+          <div className="font-mono text-[11px] text-[#6b7280] tracking-widest mb-3">
+            REJECTED ({rejected.length})
+          </div>
+          <div className="space-y-2 opacity-60">
+            {rejected.map((s) => (
+              <StreamerRow
+                key={String(s.discordId)}
+                streamer={s}
+                section="rejected"
+                busy={busyId === s.discordId}
+                onApprove={() => handleDecision(s.discordId, "approve")}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* CLIPS */}
+      <section>
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
+          <div className="font-mono text-[11px] text-yellow-300 tracking-widest flex items-center gap-2">
+            CLIPS
+            <span className="text-[#6b7280]">({clips ? clips.length : 0})</span>
+          </div>
+          <button
+            onClick={() => setAddClipOpen(true)}
+            disabled={approved.length === 0}
+            className={`font-mono text-xs tracking-wider px-3 py-2 border flex items-center gap-1.5 ${
+              approved.length === 0
+                ? "border-[#6b7280] text-[#6b7280] cursor-not-allowed"
+                : "border-yellow-400 text-yellow-400 hover:bg-yellow-400 hover:text-black"
+            }`}
+            title={
+              approved.length === 0
+                ? "Approve at least one streamer first"
+                : "Add a clip"
+            }
+          >
+            <Plus className="w-3 h-3" /> ADD CLIP
+          </button>
+        </div>
+
+        {clips && clips.length === 0 ? (
+          <div className="font-body text-sm text-[#c8c2b3] italic">
+            No clips yet. Click ADD CLIP to upload one.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {clips &&
+              clips.map((c, i) => (
+                <ClipRow
+                  key={String(c.clipUrl) + i}
+                  clip={c}
+                  busy={busyId === c.clipUrl}
+                  onToggleFeatured={() => handleClipAction(c.clipUrl, "feature")}
+                  onRemove={() => handleClipAction(c.clipUrl, "remove")}
+                />
+              ))}
+          </div>
+        )}
+      </section>
+
+      {addClipOpen && (
+        <AddClipModal
+          authToken={authToken}
+          streamers={approved}
+          onClose={() => setAddClipOpen(false)}
+          onSuccess={() => {
+            setAddClipOpen(false);
+            fetchAll();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function StreamerRow({
+  streamer,
+  section,
+  busy,
+  onApprove,
+  onReject,
+  onToggleFeatured,
+}) {
+  const name = String(streamer.streamerName || "—");
+  const twitch = String(streamer.twitchUrl || "");
+  const discord = String(streamer.discordUsername || "");
+  const family = !!streamer.familyFriendly;
+  const featured = !!streamer.featured;
+  const hasReg = !!streamer.hasTournamentRegistration;
+
+  return (
+    <div className="border-2 border-[#f5f1e8]/15 bg-[#131a2a] p-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="font-display text-base text-[#f5f1e8] truncate">
+              {name}
+            </span>
+            {featured && (
+              <span
+                title="Featured"
+                className="font-mono text-[9px] tracking-widest px-1.5 py-0.5 bg-yellow-400/20 text-yellow-300 border border-yellow-400/40 flex items-center gap-1"
+              >
+                <Star className="w-2.5 h-2.5" /> FEATURED
+              </span>
+            )}
+            {family && (
+              <span className="font-mono text-[9px] tracking-widest px-1.5 py-0.5 bg-green-400/15 text-green-300 border border-green-400/30">
+                FAMILY FRIENDLY
+              </span>
+            )}
+            {!hasReg && section === "pending" && (
+              <span
+                className="font-mono text-[9px] tracking-widest px-1.5 py-0.5 bg-orange-400/15 text-orange-300 border border-orange-400/40"
+                title="This applicant is not registered for the tournament"
+              >
+                ⚠ NOT REGISTERED
+              </span>
+            )}
+          </div>
+          <div className="font-mono text-[11px] text-[#c8c2b3] flex items-center gap-2 flex-wrap">
+            <span>@{discord}</span>
+            {twitch && (
+              <>
+                <span className="text-[#6b7280]">·</span>
+                <a
+                  href={twitch}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-yellow-400 hover:text-yellow-300 underline truncate inline-flex items-center gap-1"
+                >
+                  {twitch.replace(/^https?:\/\//, "")}
+                  <ExternalLink className="w-2.5 h-2.5" />
+                </a>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {section === "pending" && (
+            <>
+              <button
+                onClick={onApprove}
+                disabled={busy}
+                className="font-mono text-xs tracking-wider px-3 py-2 border-2 border-green-400 text-green-300 hover:bg-green-400 hover:text-black disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <UserCheck className="w-3 h-3" />
+                {busy ? "…" : "APPROVE"}
+              </button>
+              <button
+                onClick={onReject}
+                disabled={busy}
+                className="font-mono text-xs tracking-wider px-3 py-2 border-2 border-red-400/60 text-red-300 hover:bg-red-400 hover:text-black disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <UserX className="w-3 h-3" />
+                {busy ? "…" : "REJECT"}
+              </button>
+            </>
+          )}
+          {section === "approved" && (
+            <>
+              <button
+                onClick={onToggleFeatured}
+                disabled={busy}
+                className={`font-mono text-xs tracking-wider px-3 py-2 border-2 disabled:opacity-50 flex items-center gap-1.5 ${
+                  featured
+                    ? "border-yellow-400 bg-yellow-400/20 text-yellow-300"
+                    : "border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400"
+                }`}
+                title={featured ? "Currently featured" : "Mark as featured"}
+              >
+                <Star className="w-3 h-3" />
+                {busy ? "…" : featured ? "UNFEATURE" : "FEATURE"}
+              </button>
+              <button
+                onClick={onReject}
+                disabled={busy}
+                className="font-mono text-xs tracking-wider px-3 py-2 border-2 border-red-400/40 text-red-300/80 hover:bg-red-400/20 disabled:opacity-50"
+                title="Remove from hub (reject)"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </>
+          )}
+          {section === "rejected" && (
+            <button
+              onClick={onApprove}
+              disabled={busy}
+              className="font-mono text-xs tracking-wider px-3 py-2 border border-green-400/60 text-green-300/80 hover:bg-green-400/20 disabled:opacity-50"
+              title="Re-approve"
+            >
+              {busy ? "…" : "RE-APPROVE"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ClipRow({ clip, busy, onToggleFeatured, onRemove }) {
+  const caption = String(clip.caption || "");
+  const url = String(clip.clipUrl || "");
+  const streamer = String(clip.streamerName || "—");
+  const streamerUrl = String(clip.streamerTwitchUrl || "");
+  const featured = !!clip.featured;
+
+  return (
+    <div className="border-2 border-[#f5f1e8]/15 bg-[#131a2a] p-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="font-body text-sm text-[#f5f1e8] line-clamp-1">
+              {caption || "(no caption)"}
+            </span>
+            {featured && (
+              <span className="font-mono text-[9px] tracking-widest px-1.5 py-0.5 bg-yellow-400/20 text-yellow-300 border border-yellow-400/40 flex items-center gap-1">
+                <Star className="w-2.5 h-2.5" /> FEATURED
+              </span>
+            )}
+          </div>
+          <div className="font-mono text-[10px] text-[#c8c2b3] flex items-center gap-2 flex-wrap">
+            <span>
+              by{" "}
+              {streamerUrl ? (
+                <a
+                  href={streamerUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-yellow-400 hover:text-yellow-300 underline"
+                >
+                  {streamer}
+                </a>
+              ) : (
+                <span>{streamer}</span>
+              )}
+            </span>
+            <span className="text-[#6b7280]">·</span>
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[#c8c2b3] hover:text-yellow-400 underline truncate inline-flex items-center gap-1"
+            >
+              clip
+              <ExternalLink className="w-2.5 h-2.5" />
+            </a>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={onToggleFeatured}
+            disabled={busy}
+            className={`font-mono text-xs tracking-wider px-3 py-2 border-2 disabled:opacity-50 flex items-center gap-1.5 ${
+              featured
+                ? "border-yellow-400 bg-yellow-400/20 text-yellow-300"
+                : "border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400"
+            }`}
+          >
+            <Star className="w-3 h-3" />
+            {busy ? "…" : featured ? "UNFEATURE" : "FEATURE"}
+          </button>
+          <button
+            onClick={onRemove}
+            disabled={busy}
+            className="font-mono text-xs tracking-wider px-3 py-2 border-2 border-red-400/60 text-red-300 hover:bg-red-400 hover:text-black disabled:opacity-50"
+            title="Remove clip"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AddClipModal({ authToken, streamers, onClose, onSuccess }) {
+  const [selectedDiscordId, setSelectedDiscordId] = useState(
+    streamers[0]?.discordId || ""
+  );
+  const [clipUrl, setClipUrl] = useState("");
+  const [caption, setCaption] = useState("");
+  const [featured, setFeatured] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  // Close on Escape
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape" && !submitting) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, submitting]);
+
+  const selectedStreamer = streamers.find(
+    (s) => s.discordId === selectedDiscordId
+  );
+  const trimmedUrl = clipUrl.trim();
+  const urlValid = trimmedUrl && /^https?:\/\//i.test(trimmedUrl);
+  const canSubmit = !submitting && urlValid && selectedStreamer;
+
+  const handleSubmit = async () => {
+    setError("");
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/clips/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          authToken,
+          clipUrl: trimmedUrl,
+          streamerName: selectedStreamer.streamerName,
+          streamerTwitchUrl: selectedStreamer.twitchUrl,
+          caption: caption.trim(),
+          featured,
+        }),
+      });
+      const result = await res.json();
+      if (!result.ok) {
+        setError(String(result.error || "Could not add clip."));
+        setSubmitting(false);
+        return;
+      }
+      if (typeof onSuccess === "function") onSuccess();
+    } catch (err) {
+      setError("Network error.");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <ModalShell onClose={onClose} title="Add Clip">
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">
+        STREAMER
+      </div>
+      <select
+        value={selectedDiscordId}
+        onChange={(e) => setSelectedDiscordId(e.target.value)}
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400 mb-4"
+      >
+        {streamers.map((s) => (
+          <option key={String(s.discordId)} value={String(s.discordId)}>
+            {String(s.streamerName)} ({String(s.discordUsername || "")})
+          </option>
+        ))}
+      </select>
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">
+        TWITCH CLIP URL
+      </div>
+      <input
+        type="url"
+        value={clipUrl}
+        onChange={(e) => setClipUrl(e.target.value)}
+        placeholder="https://clips.twitch.tv/..."
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400 mb-2"
+      />
+      {clipUrl && !urlValid && (
+        <div className="font-mono text-[11px] text-red-300 mb-3">
+          URL must start with http:// or https://
+        </div>
+      )}
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1 mt-4">
+        CAPTION (optional)
+      </div>
+      <input
+        type="text"
+        value={caption}
+        onChange={(e) => setCaption(e.target.value)}
+        placeholder="Short description"
+        maxLength={120}
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400 mb-4"
+      />
+
+      <label className="flex items-center gap-2 cursor-pointer select-none mt-2">
+        <input
+          type="checkbox"
+          checked={featured}
+          onChange={(e) => setFeatured(e.target.checked)}
+          className="accent-yellow-400"
+        />
+        <span className="text-sm text-[#f5f1e8]">
+          Feature this clip on the hub
+        </span>
+      </label>
+
+      {error && (
+        <div className="border-l-4 border-red-500 bg-red-500/10 p-3 font-mono text-xs text-red-300 mt-4">
+          {error}
+        </div>
+      )}
+
+      <div className="flex gap-2 justify-end mt-6">
+        <button
+          onClick={onClose}
+          disabled={submitting}
+          className="font-mono text-xs px-4 py-2 border border-[#c8c2b3] text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400 disabled:opacity-50"
+        >
+          CANCEL
+        </button>
+        <button
+          onClick={handleSubmit}
+          disabled={!canSubmit}
+          className={`font-display px-5 py-2 border-2 transition-all ${
+            canSubmit
+              ? "bg-yellow-400 text-black border-yellow-400 hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_0_#ef4444]"
+              : "bg-transparent text-[#6b7280] border-[#6b7280] cursor-not-allowed"
+          }`}
+        >
+          {submitting ? "ADDING…" : "ADD CLIP"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+/* ──────────────────────────── END STREAMER HUB ADMIN ──────────────────────────── */
+
+/* ──────────────────────────── SPONSORS ADMIN ──────────────────────────── */
+
+function SponsorsAdmin({ authToken, identity }) {
+  const [sponsors, setSponsors] = useState(null);
+  const [inquiries, setInquiries] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [busyId, setBusyId] = useState("");
+  const [editModal, setEditModal] = useState(null); // null | {sponsor} | {sponsor: null} for new
+  const [subTab, setSubTab] = useState("sponsors"); // "sponsors" | "inquiries"
+
+  const fetchAll = useCallback(async () => {
+    setError(null);
+    try {
+      const [sRes, iRes] = await Promise.all([
+        fetch("/api/admin/sponsors/list", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ authToken }),
+        }),
+        fetch("/api/admin/sponsors/inquiries", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ authToken }),
+        }),
+      ]);
+      const sData = await sRes.json();
+      const iData = await iRes.json();
+      if (!sData.ok) {
+        setError(String(sData.error || "Could not load sponsors."));
+        setLoading(false);
+        return;
+      }
+      setSponsors(Array.isArray(sData.sponsors) ? sData.sponsors : []);
+      setInquiries(
+        iData.ok && Array.isArray(iData.inquiries) ? iData.inquiries : []
+      );
+      setLoading(false);
+    } catch (err) {
+      setError("Network error.");
+      setLoading(false);
+    }
+  }, [authToken]);
+
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
+
+  const handleSponsorOp = async (id, op) => {
+    setBusyId(String(id) + op);
+    try {
+      const res = await fetch("/api/admin/sponsors/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ authToken, id, op }),
+      });
+      const result = await res.json();
+      if (!result.ok) setError(String(result.error || "Action failed."));
+      await fetchAll();
+    } catch (err) {
+      setError("Network error.");
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const handleInquiryStatus = async (id, status) => {
+    setBusyId(String(id) + status);
+    try {
+      const res = await fetch("/api/admin/sponsors/inquiry-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ authToken, id, status }),
+      });
+      const result = await res.json();
+      if (!result.ok) setError(String(result.error || "Action failed."));
+      await fetchAll();
+    } catch (err) {
+      setError("Network error.");
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="font-mono text-sm text-[#c8c2b3] animate-pulse">
+        Loading sponsors…
+      </div>
+    );
+  }
+
+  if (error && !sponsors) {
+    return (
+      <div className="border-l-4 border-red-500 bg-red-500/10 p-4 max-w-xl">
+        <div className="font-display text-lg mb-1">Couldn't load sponsors</div>
+        <p className="font-body text-sm text-red-300 mb-4">{String(error)}</p>
+        <button
+          onClick={fetchAll}
+          className="font-mono text-xs px-3 py-2 border border-red-300 text-red-300 hover:bg-red-500/20"
+        >
+          RETRY
+        </button>
+      </div>
+    );
+  }
+
+  const newInquiryCount = inquiries
+    ? inquiries.filter((i) => i.status === "new").length
+    : 0;
+
+  return (
+    <div>
+      {/* Sub-tab toggle */}
+      <div className="flex items-center gap-2 mb-6">
+        <button
+          onClick={() => setSubTab("sponsors")}
+          className={`font-mono text-[11px] tracking-widest px-3 py-1.5 border ${
+            subTab === "sponsors"
+              ? "bg-yellow-400 text-black border-yellow-400"
+              : "border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400"
+          }`}
+        >
+          SPONSORS ({sponsors ? sponsors.length : 0})
+        </button>
+        <button
+          onClick={() => setSubTab("inquiries")}
+          className={`font-mono text-[11px] tracking-widest px-3 py-1.5 border flex items-center gap-1.5 ${
+            subTab === "inquiries"
+              ? "bg-yellow-400 text-black border-yellow-400"
+              : "border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400"
+          }`}
+        >
+          <Mail className="w-3 h-3" />
+          INQUIRIES ({inquiries ? inquiries.length : 0})
+          {newInquiryCount > 0 && (
+            <span className="ml-1 px-1.5 bg-red-500 text-white rounded-full text-[9px]">
+              {newInquiryCount} new
+            </span>
+          )}
+        </button>
+        <button
+          onClick={fetchAll}
+          className="font-mono text-[11px] tracking-wider px-3 py-1.5 border border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400 flex items-center gap-1.5 ml-auto"
+        >
+          <RefreshCw className="w-3 h-3" /> REFRESH
+        </button>
+      </div>
+
+      {error && (
+        <div className="border-l-4 border-red-500 bg-red-500/10 p-3 mb-4 font-mono text-xs text-red-300 max-w-xl">
+          {String(error)}
+        </div>
+      )}
+
+      {/* SPONSORS SUB-TAB */}
+      {subTab === "sponsors" && (
+        <div>
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+            <div className="font-display text-2xl text-[#f5f1e8]">
+              Sponsor Directory
+            </div>
+            <button
+              onClick={() => setEditModal({ sponsor: null })}
+              className="font-mono text-xs tracking-wider px-3 py-2 border border-yellow-400 text-yellow-400 hover:bg-yellow-400 hover:text-black flex items-center gap-1.5"
+            >
+              <Plus className="w-3 h-3" /> ADD SPONSOR
+            </button>
+          </div>
+
+          {sponsors && sponsors.length === 0 ? (
+            <div className="font-body text-sm text-[#c8c2b3] italic">
+              No sponsors yet. Click ADD SPONSOR to create the first one.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {sponsors &&
+                sponsors.map((s) => (
+                  <SponsorAdminRow
+                    key={String(s.id)}
+                    sponsor={s}
+                    busy={busyId.startsWith(String(s.id))}
+                    onEdit={() => setEditModal({ sponsor: s })}
+                    onToggleActive={() =>
+                      handleSponsorOp(s.id, "toggleActive")
+                    }
+                    onDelete={() => handleSponsorOp(s.id, "delete")}
+                  />
+                ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* INQUIRIES SUB-TAB */}
+      {subTab === "inquiries" && (
+        <div>
+          <div className="font-display text-2xl text-[#f5f1e8] mb-4">
+            Sponsor Inquiries
+          </div>
+          {inquiries && inquiries.length === 0 ? (
+            <div className="font-body text-sm text-[#c8c2b3] italic">
+              No inquiries yet.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {inquiries &&
+                inquiries.map((inq) => (
+                  <InquiryRow
+                    key={String(inq.id)}
+                    inquiry={inq}
+                    busy={busyId.startsWith(String(inq.id))}
+                    onSetStatus={(status) =>
+                      handleInquiryStatus(inq.id, status)
+                    }
+                  />
+                ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {editModal && (
+        <SponsorEditModal
+          authToken={authToken}
+          sponsor={editModal.sponsor}
+          onClose={() => setEditModal(null)}
+          onSuccess={() => {
+            setEditModal(null);
+            fetchAll();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function SponsorAdminRow({ sponsor, busy, onEdit, onToggleActive, onDelete }) {
+  const name = String(sponsor.name || "—");
+  const tier = String(sponsor.tier || "partner");
+  const active = !!sponsor.active;
+  const logoUrl = String(sponsor.logoUrl || "");
+
+  return (
+    <div
+      className={`border-2 ${
+        active ? "border-[#f5f1e8]/15" : "border-[#f5f1e8]/8 opacity-60"
+      } bg-[#131a2a] p-3`}
+    >
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          {logoUrl && (
+            <img
+              src={logoUrl}
+              alt=""
+              className="h-10 w-16 object-contain bg-[#0a0e1a]/60 border border-[#f5f1e8]/10 flex-shrink-0"
+              onError={(e) => {
+                e.currentTarget.style.display = "none";
+              }}
+            />
+          )}
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-display text-base text-[#f5f1e8] truncate">
+                {name}
+              </span>
+              <span
+                className={`font-mono text-[9px] tracking-widest px-1.5 py-0.5 border ${
+                  tier === "title"
+                    ? "bg-yellow-400/20 text-yellow-300 border-yellow-400/40"
+                    : "bg-[#f5f1e8]/5 text-[#c8c2b3] border-[#f5f1e8]/15"
+                }`}
+              >
+                {tier.toUpperCase()}
+              </span>
+              {!active && (
+                <span className="font-mono text-[9px] tracking-widest px-1.5 py-0.5 bg-red-400/10 text-red-300 border border-red-400/30">
+                  HIDDEN
+                </span>
+              )}
+            </div>
+            <div className="font-mono text-[10px] text-[#6b7280] mt-0.5">
+              order {sponsor.displayOrder}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={onEdit}
+            disabled={busy}
+            className="font-mono text-xs tracking-wider px-3 py-2 border-2 border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            <Pencil className="w-3 h-3" /> EDIT
+          </button>
+          <button
+            onClick={onToggleActive}
+            disabled={busy}
+            className={`font-mono text-xs tracking-wider px-3 py-2 border-2 disabled:opacity-50 ${
+              active
+                ? "border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400"
+                : "border-green-400 text-green-300 hover:bg-green-400 hover:text-black"
+            }`}
+          >
+            {busy ? "…" : active ? "HIDE" : "SHOW"}
+          </button>
+          <button
+            onClick={onDelete}
+            disabled={busy}
+            className="font-mono text-xs tracking-wider px-3 py-2 border-2 border-red-400/60 text-red-300 hover:bg-red-400 hover:text-black disabled:opacity-50"
+            title="Delete sponsor"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InquiryRow({ inquiry, busy, onSetStatus }) {
+  const [expanded, setExpanded] = useState(false);
+  const status = String(inquiry.status || "new");
+
+  const statusColor = {
+    new: "bg-red-500/20 text-red-300 border-red-400/40",
+    contacted: "bg-yellow-400/15 text-yellow-300 border-yellow-400/40",
+    won: "bg-green-400/15 text-green-300 border-green-400/40",
+    lost: "bg-[#f5f1e8]/5 text-[#6b7280] border-[#f5f1e8]/15",
+  }[status] || "bg-[#f5f1e8]/5 text-[#c8c2b3] border-[#f5f1e8]/15";
+
+  let dateStr = "";
+  try {
+    if (inquiry.timestamp) {
+      dateStr = new Date(inquiry.timestamp).toLocaleDateString();
+    }
+  } catch (e) {
+    dateStr = "";
+  }
+
+  return (
+    <div className="border-2 border-[#f5f1e8]/15 bg-[#131a2a] p-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <span className="font-display text-base text-[#f5f1e8]">
+              {String(inquiry.name || "—")}
+            </span>
+            <span
+              className={`font-mono text-[9px] tracking-widest px-1.5 py-0.5 border ${statusColor}`}
+            >
+              {status.toUpperCase()}
+            </span>
+            {dateStr && (
+              <span className="font-mono text-[10px] text-[#6b7280]">
+                {dateStr}
+              </span>
+            )}
+          </div>
+          <div className="font-mono text-[11px] text-[#c8c2b3]">
+            <a
+              href={`mailto:${String(inquiry.email)}`}
+              className="text-yellow-400 hover:text-yellow-300 underline"
+            >
+              {String(inquiry.email)}
+            </a>
+            {inquiry.company && (
+              <span> · {String(inquiry.company)}</span>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="font-mono text-[10px] text-[#c8c2b3] hover:text-yellow-400 px-2 py-1"
+        >
+          {expanded ? "▲ LESS" : "▼ MORE"}
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="mt-3 pt-3 border-t border-[#f5f1e8]/10">
+          <div className="grid grid-cols-2 gap-2 mb-3 font-mono text-[11px]">
+            <div>
+              <span className="text-[#6b7280]">Interest: </span>
+              <span className="text-[#f5f1e8]">
+                {String(inquiry.interest || "—")}
+              </span>
+            </div>
+            <div>
+              <span className="text-[#6b7280]">Budget: </span>
+              <span className="text-[#f5f1e8]">
+                {String(inquiry.budget || "—")}
+              </span>
+            </div>
+          </div>
+          {inquiry.message && (
+            <div className="mb-3">
+              <div className="font-mono text-[10px] text-[#6b7280] mb-1">
+                MESSAGE
+              </div>
+              <div className="font-body text-sm text-[#f5f1e8] bg-[#0a0e1a]/60 p-2 border border-[#f5f1e8]/10 whitespace-pre-wrap">
+                {String(inquiry.message)}
+              </div>
+            </div>
+          )}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-mono text-[10px] text-[#6b7280]">
+              SET STATUS:
+            </span>
+            {["new", "contacted", "won", "lost"].map((st) => (
+              <button
+                key={st}
+                onClick={() => onSetStatus(st)}
+                disabled={busy || status === st}
+                className={`font-mono text-[10px] tracking-wider px-2 py-1 border disabled:opacity-40 ${
+                  status === st
+                    ? "bg-yellow-400 text-black border-yellow-400"
+                    : "border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400"
+                }`}
+              >
+                {st.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SponsorEditModal({ authToken, sponsor, onClose, onSuccess }) {
+  const isEdit = !!sponsor;
+  const [name, setName] = useState(sponsor?.name || "");
+  const [tier, setTier] = useState(sponsor?.tier || "partner");
+  const [logoUrl, setLogoUrl] = useState(sponsor?.logoUrl || "");
+  const [websiteUrl, setWebsiteUrl] = useState(sponsor?.websiteUrl || "");
+  const [description, setDescription] = useState(sponsor?.description || "");
+  const [promoCode, setPromoCode] = useState(sponsor?.promoCode || "");
+  const [promoDetails, setPromoDetails] = useState(
+    sponsor?.promoDetails || ""
+  );
+  const [displayOrder, setDisplayOrder] = useState(
+    sponsor?.displayOrder ? String(sponsor.displayOrder) : "1"
+  );
+  const [active, setActive] = useState(
+    sponsor ? sponsor.active !== false : true
+  );
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const nameValid = name.trim().length >= 2;
+  const canSubmit = !submitting && nameValid;
+
+  const handleSubmit = async () => {
+    setError("");
+    setSubmitting(true);
+    try {
+      const payload = {
+        authToken,
+        name: name.trim(),
+        tier,
+        logoUrl: logoUrl.trim(),
+        websiteUrl: websiteUrl.trim(),
+        description: description.trim(),
+        promoCode: promoCode.trim(),
+        promoDetails: promoDetails.trim(),
+        displayOrder: Number(displayOrder) || 1,
+        active,
+      };
+      let res;
+      if (isEdit) {
+        res = await fetch("/api/admin/sponsors/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, id: sponsor.id, op: "edit" }),
+        });
+      } else {
+        res = await fetch("/api/admin/sponsors/add", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+      const result = await res.json();
+      if (!result.ok) {
+        setError(String(result.error || "Could not save sponsor."));
+        setSubmitting(false);
+        return;
+      }
+      if (typeof onSuccess === "function") onSuccess();
+    } catch (err) {
+      setError("Network error.");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <ModalShell
+      onClose={onClose}
+      title={isEdit ? `Edit · ${String(sponsor.name)}` : "Add Sponsor"}
+    >
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">
+            SPONSOR NAME *
+          </div>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={80}
+            className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400"
+          />
+        </div>
+        <div>
+          <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">TIER</div>
+          <select
+            value={tier}
+            onChange={(e) => setTier(e.target.value)}
+            className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400"
+          >
+            <option value="title">Title</option>
+            <option value="partner">Partner</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1 mt-3">
+        LOGO URL
+      </div>
+      <input
+        type="url"
+        value={logoUrl}
+        onChange={(e) => setLogoUrl(e.target.value)}
+        placeholder="https://i.imgur.com/example.png"
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400"
+      />
+      <div className="font-mono text-[10px] text-[#6b7280] mt-1">
+        Direct image URL (ends in .png/.jpg). Upload to imgur and copy the
+        image address.
+      </div>
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1 mt-3">
+        WEBSITE URL
+      </div>
+      <input
+        type="url"
+        value={websiteUrl}
+        onChange={(e) => setWebsiteUrl(e.target.value)}
+        placeholder="https://sponsor-website.com"
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400"
+      />
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1 mt-3">
+        DESCRIPTION
+      </div>
+      <textarea
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        rows={2}
+        maxLength={300}
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400 resize-y"
+      />
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+        <div>
+          <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">
+            PROMO CODE
+          </div>
+          <input
+            type="text"
+            value={promoCode}
+            onChange={(e) => setPromoCode(e.target.value)}
+            maxLength={40}
+            className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400"
+          />
+        </div>
+        <div>
+          <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">
+            DISPLAY ORDER
+          </div>
+          <input
+            type="number"
+            value={displayOrder}
+            onChange={(e) => setDisplayOrder(e.target.value)}
+            min={1}
+            className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400"
+          />
+        </div>
+      </div>
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1 mt-3">
+        PROMO DETAILS
+      </div>
+      <input
+        type="text"
+        value={promoDetails}
+        onChange={(e) => setPromoDetails(e.target.value)}
+        placeholder="e.g. 10% off your first order"
+        maxLength={120}
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400"
+      />
+
+      <label className="flex items-center gap-2 cursor-pointer select-none mt-4">
+        <input
+          type="checkbox"
+          checked={active}
+          onChange={(e) => setActive(e.target.checked)}
+          className="accent-yellow-400"
+        />
+        <span className="text-sm text-[#f5f1e8]">
+          Active (visible on the public sponsors page)
+        </span>
+      </label>
+
+      {error && (
+        <div className="border-l-4 border-red-500 bg-red-500/10 p-3 font-mono text-xs text-red-300 mt-4">
+          {error}
+        </div>
+      )}
+
+      <div className="flex gap-2 justify-end mt-6">
+        <button
+          onClick={onClose}
+          disabled={submitting}
+          className="font-mono text-xs px-4 py-2 border border-[#c8c2b3] text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400 disabled:opacity-50"
+        >
+          CANCEL
+        </button>
+        <button
+          onClick={handleSubmit}
+          disabled={!canSubmit}
+          className={`font-display px-5 py-2 border-2 transition-all ${
+            canSubmit
+              ? "bg-yellow-400 text-black border-yellow-400 hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_0_#ef4444]"
+              : "bg-transparent text-[#6b7280] border-[#6b7280] cursor-not-allowed"
+          }`}
+        >
+          {submitting ? "SAVING…" : isEdit ? "SAVE CHANGES" : "ADD SPONSOR"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+/* ──────────────────────────── END SPONSORS ADMIN ──────────────────────────── */
+
+/**
+ * Parse the textarea input into a list of { teamId, teamName } objects.
+ * Returns { teams: [...], error: string|null }.
+ */
+function parseTeams(raw) {
+  if (!raw.trim()) return { teams: [], error: null };
+
+  const lines = raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
+  const teams = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const colonIdx = line.indexOf(":");
+    if (colonIdx === -1) {
+      return {
+        teams: [],
+        error: `Line ${i + 1} is missing the colon separator. Use TeamID:TeamName format.`,
+      };
+    }
+    const teamId = line.slice(0, colonIdx).trim();
+    const teamName = line.slice(colonIdx + 1).trim();
+    if (!teamId || !teamName) {
+      return {
+        teams: [],
+        error: `Line ${i + 1} has an empty TeamID or Team Name.`,
+      };
+    }
+    teams.push({ teamId, teamName });
+  }
+
+  if (teams.length > 16) {
+    return {
+      teams,
+      error: `Too many teams (${teams.length}). The bracket holds at most 16.`,
+    };
+  }
+  if (teams.length === 1) {
+    return {
+      teams,
+      error: "Need at least 2 teams to run a bracket.",
+    };
+  }
+
+  return { teams, error: null };
+}
+
+/* ────────────────────── UNDER CONSTRUCTION TAPE ────────────────────── */
 
 function UnderConstructionTape() {
   return (
@@ -286,12 +2715,7 @@ function UnderConstructionTape() {
       <div className="relative" style={{ width: 280, height: 180 }}>
         <div
           className="tape-wobble absolute"
-          style={{
-            top: 38,
-            right: -38,
-            width: 320,
-            transformOrigin: "center",
-          }}
+          style={{ top: 38, right: -38, width: 320, transformOrigin: "center" }}
         >
           <div className="hazard-stripes py-2 px-4 shadow-2xl border-y-2 border-black flex items-center justify-center gap-2">
             <Construction className="w-5 h-5 text-black" strokeWidth={3} />
@@ -301,1148 +2725,7 @@ function UnderConstructionTape() {
             >
               UNDER CONSTRUCTION
             </span>
-            <Hammer className="w-5 h-5 text-black flicker" strokeWidth={3} />
-          </div>
-          <div className="text-center mt-1">
-            <span className="font-mono text-[10px] text-yellow-300 bg-black/70 px-2 py-0.5 rounded-sm">
-              v0.1 · pls excuse the dust
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ────────────────────── LANDING ────────────────────── */
-
-function Landing({ onPick }) {
-  const tiles = [
-    {
-      key: "register",
-      label: "Register Here",
-      sub: "Solo, partial, or full team",
-      icon: UserPlus,
-      live: true,
-      accent: "yellow",
-    },
-    {
-      key: "brackets",
-      label: "Tournament Brackets",
-      sub: "Live double-elim once seeding closes",
-      icon: Trophy,
-      live: true,
-      href: "/bracket",
-      accent: "yellow",
-    },
-    {
-      key: "leaderboards",
-      label: "Leaderboards",
-      sub: "Standings, W/L, status — updated live",
-      icon: Sparkles,
-      live: true,
-      href: "/leaderboard",
-      accent: "yellow",
-    },
-    {
-      key: "streamers",
-      label: "Streamer Hub",
-      sub: "Featured streamers, clips, and apply to cast",
-      icon: Radio,
-      live: true,
-      href: "/streamers",
-      accent: "yellow",
-    },
-    {
-      key: "sponsors",
-      label: "Sponsors",
-      sub: "Our partners — and how to become one",
-      icon: Handshake,
-      live: true,
-      href: "/sponsors",
-      accent: "yellow",
-    },
-  ];
-
-  return (
-    <main className="max-w-6xl mx-auto px-6 sm:px-10 pt-20 pb-24 slide-up">
-      <header className="mb-14">
-        <div className="font-mono text-xs text-yellow-400 mb-3 tracking-widest">
-          / / PRESENTED BY MAJOR MAYHEM
-        </div>
-        <h1
-          className="font-display text-5xl sm:text-7xl md:text-8xl leading-[0.95] text-[#f5f1e8]"
-          style={{
-            textShadow: "4px 4px 0 #facc15, 8px 8px 0 #ef4444",
-          }}
-        >
-          THE LATTICE
-          <br />
-          <span className="text-yellow-400">OPEN</span>
-        </h1>
-        <p className="font-body text-lg sm:text-xl text-[#c8c2b3] max-w-2xl mt-6 leading-relaxed">
-          A casual Marvel Rivals invitational. Sixteen teams, ninety-six heroes,
-          one ten-hour broadcast. Show up, throw down, have fun.
-        </p>
-        <div className="mt-6 flex flex-wrap gap-3 font-mono text-xs">
-          <span className="px-3 py-1 border border-yellow-400/40 text-yellow-300">
-            EVENT DAY · JUN 20
-          </span>
-          <span className="px-3 py-1 border border-[#f5f1e8]/20 text-[#c8c2b3]">
-            16 TEAMS
-          </span>
-          <span className="px-3 py-1 border border-[#f5f1e8]/20 text-[#c8c2b3]">
-            ${PER_MEMBER_FEE_USD} / PLAYER
-          </span>
-        </div>
-      </header>
-
-      <section className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-        {tiles.map((t, i) => (
-          <Tile
-            key={t.key}
-            tile={t}
-            onClick={() => {
-              if (!t.live) return;
-              if (t.href) {
-                window.location.href = t.href;
-              } else {
-                onPick(t.key);
-              }
-            }}
-            disabled={!t.live}
-            delay={i * 80}
-          />
-        ))}
-      </section>
-
-      <footer className="mt-16 font-mono text-xs text-[#6b7280] flex flex-wrap gap-x-6 gap-y-1">
-        <span>© Major Mayhem · Lattice Open</span>
-        <span>Not affiliated with NetEase or Marvel Games</span>
-        <span className="text-yellow-400">PHASE 1 BUILD</span>
-      </footer>
-    </main>
-  );
-}
-
-function Tile({ tile, onClick, disabled, delay }) {
-  const Icon = tile.icon;
-  const live = tile.live;
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={`group relative text-left p-7 sm:p-8 border-2 transition-all duration-200 slide-up ${
-        live
-          ? "border-yellow-400 bg-yellow-400 text-black hover:translate-x-[-3px] hover:translate-y-[-3px] hover:shadow-[6px_6px_0_0_#ef4444] cursor-pointer"
-          : "border-[#f5f1e8]/15 bg-[#131a2a] text-[#c8c2b3] cursor-not-allowed opacity-70"
-      }`}
-      style={{ animationDelay: `${delay}ms` }}
-    >
-      <div className="flex items-start justify-between mb-6">
-        <Icon className="w-8 h-8" strokeWidth={2.25} />
-        {!live && (
-          <span className="font-mono text-[10px] tracking-widest border border-current px-2 py-0.5">
-            COMING SOON
-          </span>
-        )}
-        {live && (
-          <span className="font-mono text-[10px] tracking-widest bg-black text-yellow-400 px-2 py-0.5">
-            ▸ OPEN
-          </span>
-        )}
-      </div>
-      <div className="font-display text-2xl sm:text-3xl mb-1.5">{tile.label}</div>
-      <div className="font-body text-sm">{tile.sub}</div>
-    </button>
-  );
-}
-
-/* ────────────────────── COMING SOON SCREEN ────────────────────── */
-
-function ComingSoon({ kind, onBack }) {
-  const labels = {
-    brackets: "Tournament Brackets",
-    leaderboards: "Leaderboards",
-    streamers: "Streamer Hub",
-  };
-  return (
-    <main className="max-w-3xl mx-auto px-6 sm:px-10 pt-20 pb-24 slide-up">
-      <BackButton onClick={onBack} />
-      <div className="mt-8 border-2 border-dashed border-yellow-400/50 bg-[#131a2a] p-12 text-center">
-        <Construction className="w-12 h-12 text-yellow-400 mx-auto mb-4" />
-        <h2 className="font-display text-3xl sm:text-4xl mb-2">{labels[kind]}</h2>
-        <p className="font-mono text-yellow-400 text-sm mb-3">// NOT YET WIRED UP</p>
-        <p className="font-body text-[#c8c2b3] max-w-md mx-auto">
-          This section unlocks once registration closes and the bracket / scrim data
-          starts flowing. Check back soon.
-        </p>
-      </div>
-    </main>
-  );
-}
-
-/* ────────────────────── REGISTRATION ────────────────────── */
-
-const TOTAL_STEPS = 8; // step 0 is the Discord auth gate
-
-function Registration({ authToken, discordIdentity, onBack, onComplete }) {
-  // Start at step 0 if not yet authenticated, otherwise step 1.
-  const [step, setStep] = useState(authToken && discordIdentity ? 1 : 0);
-  const [data, setData] = useState({
-    fullName: "",
-    discordName: discordIdentity?.username || "",
-    ign: "",
-    rank: "",
-    servers: [],
-    isStreamer: false,
-    agreedDiscordTOS: false,
-    agreedTournamentTOS: false,
-    teamType: "", // 'solo' | 'partial' | 'full'
-    partialMemberCount: "", // only used when teamType === 'partial' (2-5)
-    agreedRPMA: false,
-    confirmedCaptain: false,
-    acknowledgedCaptainResponsibility: false,
-    teamName: "",
-    agreedBroadcastTOS: false,
-  });
-
-  const set = (patch) => setData((d) => ({ ...d, ...patch }));
-
-  const isFullTeam = data.teamType === "full";
-  const isIncomplete = data.teamType === "solo" || data.teamType === "partial";
-
-  // Step 0 = auth gate. Steps 1-7 are the original 7 steps.
-  const stepIsValid = (() => {
-    switch (step) {
-      case 0:
-        // Discord auth required to leave the gate
-        return !!authToken && !!discordIdentity;
-      case 1:
-        return (
-          data.fullName.trim() &&
-          data.discordName.trim() &&
-          data.ign.trim() &&
-          data.rank &&
-          data.servers.length > 0
-        );
-      case 2:
-        return data.agreedDiscordTOS;
-      case 3:
-        return data.agreedTournamentTOS;
-      case 4:
-        if (data.teamType === "") return false;
-        if (data.teamType === "partial") {
-          const n = Number(data.partialMemberCount);
-          return n >= 2 && n <= 5;
-        }
-        return true;
-      case 5:
-        if (isIncomplete) return data.agreedRPMA;
-        if (isFullTeam)
-          return (
-            data.confirmedCaptain &&
-            data.acknowledgedCaptainResponsibility &&
-            data.teamName.trim().length >= 2
-          );
-        return false;
-      case 6:
-        return data.agreedBroadcastTOS;
-      case 7:
-        return true; // payment screen handles its own state
-      default:
-        return false;
-    }
-  })();
-
-  const next = () => stepIsValid && setStep((s) => Math.min(s + 1, 7));
-  const prev = () => (step === 0 ? onBack() : setStep((s) => s - 1));
-
-  return (
-    <main className="max-w-3xl mx-auto px-6 sm:px-10 pt-16 pb-24">
-      <BackButton onClick={prev} label={step === 0 ? "Back to home" : "Previous step"} />
-      <ProgressBar step={step} total={7} />
-
-      <div className="mt-8 slide-up" key={step}>
-        {step === 0 && (
-          <StepAuthGate
-            data={data}
-            set={set}
-            discordIdentity={discordIdentity}
-          />
-        )}
-        {step === 1 && <StepBasicInfo data={data} set={set} discordIdentity={discordIdentity} />}
-        {step === 2 && (
-          <StepTOS
-            tos={DISCORD_TOS}
-            agreed={data.agreedDiscordTOS}
-            onChange={(v) => set({ agreedDiscordTOS: v })}
-            ribbon="STEP 2 OF 7"
-            heading="Discord Community Terms"
-            subhead="Read and acknowledge how the tournament Discord operates."
-          />
-        )}
-        {step === 3 && (
-          <StepTOS
-            tos={TOURNAMENT_TOS}
-            agreed={data.agreedTournamentTOS}
-            onChange={(v) => set({ agreedTournamentTOS: v })}
-            ribbon="STEP 3 OF 7"
-            heading="Tournament Terms of Service"
-            subhead="The casual-tournament ground rules. Read carefully."
-          />
-        )}
-        {step === 4 && <StepTeamType data={data} set={set} />}
-        {step === 5 && isIncomplete && (
-          <StepTOS
-            tos={RPMA_TOS}
-            agreed={data.agreedRPMA}
-            onChange={(v) => set({ agreedRPMA: v })}
-            ribbon="STEP 5 OF 7 · SOLO / PARTIAL"
-            heading="Random Player Matchmaking Agreement"
-            subhead="Required for any registration that isn't a full 6-person team."
-          />
-        )}
-        {step === 5 && isFullTeam && <StepCaptain data={data} set={set} />}
-        {step === 6 && (
-          <StepTOS
-            tos={BROADCAST_TOS}
-            agreed={data.agreedBroadcastTOS}
-            onChange={(v) => set({ agreedBroadcastTOS: v })}
-            ribbon="STEP 6 OF 7"
-            heading="Broadcasting & Media Release"
-            subhead="The tournament will be broadcast. This is your media release."
-          />
-        )}
-        {step === 7 && (
-          <StepPayment
-            data={data}
-            authToken={authToken}
-            onSuccess={() => onComplete(data)}
-          />
-        )}
-      </div>
-
-      {step !== 7 && (
-        <div className="mt-10 flex items-center justify-between gap-4">
-          <button
-            onClick={prev}
-            className="font-mono text-sm text-[#c8c2b3] hover:text-yellow-400 flex items-center gap-1.5"
-          >
-            <ChevronLeft className="w-4 h-4" /> {step === 0 ? "BACK" : "PREVIOUS"}
-          </button>
-          <button
-            onClick={next}
-            disabled={!stepIsValid}
-            className={`font-display px-7 py-3 border-2 transition-all flex items-center gap-2 ${
-              stepIsValid
-                ? "bg-yellow-400 text-black border-yellow-400 hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_0_#ef4444] cursor-pointer"
-                : "bg-transparent text-[#6b7280] border-[#6b7280] cursor-not-allowed"
-            }`}
-          >
-            CONTINUE <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-    </main>
-  );
-}
-
-function ProgressBar({ step, total }) {
-  return (
-    <div className="mt-6">
-      <div className="flex items-center justify-between font-mono text-[11px] text-[#c8c2b3] mb-2">
-        <span>STEP {String(step).padStart(2, "0")} / {String(total).padStart(2, "0")}</span>
-        <span className="text-yellow-400">REGISTRATION</span>
-      </div>
-      <div className="h-1 bg-[#131a2a] relative overflow-hidden">
-        <div
-          className="absolute inset-y-0 left-0 bg-yellow-400 transition-all duration-500"
-          style={{ width: `${(step / total) * 100}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-/* ────────────────────── STEP 0: AUTH GATE ────────────────────── */
-
-function StepAuthGate({ data, set, discordIdentity }) {
-  const handleDiscordSignIn = () => {
-    // Hard nav — Vercel serverless function will redirect to Discord.
-    window.location.href = "/api/discord/auth";
-  };
-
-  return (
-    <section>
-      <Ribbon text="STEP 0 OF 7 · SIGN IN" />
-      <h2 className="font-display text-3xl sm:text-4xl mt-3 mb-2">
-        Sign in to register.
-      </h2>
-      <p className="font-body text-[#c8c2b3] mb-8">
-        We use Discord to verify you're a real human and to set up your team
-        chat after registration. One click, no extra accounts.
-      </p>
-
-      {/* Discord auth ─────────────────────────────────── */}
-      <div className="border-2 border-[#5865F2]/40 bg-[#131a2a] p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-[#5865F2] rounded-full flex items-center justify-center">
-              <svg viewBox="0 0 71 55" fill="white" className="w-5 h-5">
-                <path d="M60.1 4.9A58.5 58.5 0 0045.9.5l-.7 1.4a54 54 0 00-19.5 0L25 .5a58.5 58.5 0 00-14.2 4.4C1.7 17.7-.7 30.2.4 42.4a58.9 58.9 0 0017.7 9 43.7 43.7 0 003.8-6.1 38 38 0 01-6-2.9c.5-.4 1-.8 1.5-1.1a42 42 0 0036.2 0c.5.3 1 .7 1.5 1.1-1.9 1.1-3.9 2.1-6 2.9a43.7 43.7 0 003.8 6.1 58.9 58.9 0 0017.7-9c1.5-14.2-2.4-26.6-10.5-37.5zM23.7 35.4c-3.5 0-6.4-3.2-6.4-7.2s2.8-7.3 6.4-7.3 6.4 3.2 6.4 7.3-2.8 7.2-6.4 7.2zm23.6 0c-3.5 0-6.4-3.2-6.4-7.2s2.8-7.3 6.4-7.3 6.4 3.2 6.4 7.3-2.8 7.2-6.4 7.2z" />
-              </svg>
-            </div>
-            <div>
-              <h3 className="font-display text-lg">Discord Sign-In</h3>
-              <p className="font-mono text-[10px] text-[#c8c2b3]">REQUIRED</p>
-            </div>
-          </div>
-          {discordIdentity ? (
-            <div className="flex items-center gap-2 text-[#86efac]">
-              <Check className="w-5 h-5" strokeWidth={3} />
-              <span className="font-mono text-xs">VERIFIED</span>
-            </div>
-          ) : (
-            <span className="font-mono text-xs text-[#fbbf24]">NEEDED</span>
-          )}
-        </div>
-
-        {discordIdentity ? (
-          <div className="bg-[#0a0e1a] border border-[#86efac]/30 p-3">
-            <p className="font-body text-sm text-[#f5f1e8]">
-              Signed in as{" "}
-              <span className="font-mono text-yellow-300">
-                @{discordIdentity.username}
-              </span>
-            </p>
-          </div>
-        ) : (
-          <button
-            onClick={handleDiscordSignIn}
-            className="w-full bg-[#5865F2] hover:bg-[#4752c4] text-white font-display py-3 px-4 transition-colors flex items-center justify-center gap-2"
-          >
-            SIGN IN WITH DISCORD
-          </button>
-        )}
-      </div>
-
-      <div className="mt-6 border-l-4 border-yellow-400/60 bg-yellow-400/5 p-4">
-        <div className="flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
-          <p className="font-body text-xs text-[#c8c2b3] leading-relaxed">
-            <strong className="text-yellow-300">First time?</strong>{" "}
-            You'll be redirected to Discord to authorize the Lattice Open app.
-            We only request your username — no DMs, no server access, nothing else.
-          </p>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function BackButton({ onClick, label = "Back" }) {
-  return (
-    <button
-      onClick={onClick}
-      className="font-mono text-xs text-[#c8c2b3] hover:text-yellow-400 flex items-center gap-1.5 tracking-wider"
-    >
-      <ChevronLeft className="w-4 h-4" /> {label.toUpperCase()}
-    </button>
-  );
-}
-
-/* ────────────────────── STEP 1: BASIC INFO ────────────────────── */
-
-function StepBasicInfo({ data, set, discordIdentity }) {
-  const toggleServer = (s) =>
-    set({
-      servers: data.servers.includes(s)
-        ? data.servers.filter((x) => x !== s)
-        : [...data.servers, s],
-    });
-
-  return (
-    <section>
-      <Ribbon text="STEP 1 OF 7" />
-      <h2 className="font-display text-3xl sm:text-4xl mt-3 mb-2">Who are you?</h2>
-      <p className="font-body text-[#c8c2b3] mb-8">
-        The basics. We use this to seed brackets and build your team chat.
-      </p>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-        <Field label="Full Name" required>
-          <input
-            type="text"
-            value={data.fullName}
-            onChange={(e) => set({ fullName: e.target.value })}
-            placeholder="Peter Parker"
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Discord Username" required hint="locked from sign-in">
-          <div className="w-full bg-[#0a0e1a]/50 border-2 border-[#86efac]/30 text-[#86efac] px-3 py-2.5 font-mono text-sm flex items-center justify-between">
-            <span>@{discordIdentity?.username || data.discordName}</span>
-            <Check className="w-4 h-4" strokeWidth={3} />
-          </div>
-        </Field>
-        <Field label="In-Game Name (IGN)" required>
-          <input
-            type="text"
-            value={data.ign}
-            onChange={(e) => set({ ign: e.target.value })}
-            placeholder="Your Marvel Rivals IGN"
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Current Rank" required>
-          <select
-            value={data.rank}
-            onChange={(e) => set({ rank: e.target.value })}
-            className={inputClass}
-          >
-            <option value="">Select rank…</option>
-            {RANKS.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-        </Field>
-      </div>
-
-      <div className="mt-6">
-        <Field
-          as="div"
-          label="Servers You Typically Play On"
-          required
-          hint="Pick all that apply"
-        >
-          <div className="flex flex-wrap gap-2 mt-1">
-            {SERVERS.map((s) => {
-              const active = data.servers.includes(s);
-              return (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => toggleServer(s)}
-                  className={`font-mono text-xs px-3 py-2 border-2 transition-colors ${
-                    active
-                      ? "bg-yellow-400 border-yellow-400 text-black"
-                      : "bg-transparent border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400/60"
-                  }`}
-                >
-                  {s}
-                </button>
-              );
-            })}
-          </div>
-        </Field>
-      </div>
-
-      <div className="mt-6">
-        <label className="flex items-start gap-3 cursor-pointer group">
-          <input
-            type="checkbox"
-            checked={data.isStreamer}
-            onChange={(e) => set({ isStreamer: e.target.checked })}
-            className="mt-1 w-5 h-5 accent-yellow-400 cursor-pointer"
-          />
-          <span className="font-body text-sm text-[#c8c2b3] group-hover:text-[#f5f1e8]">
-            <strong className="text-[#f5f1e8]">I'm a streamer.</strong> I'd like a
-            Streamer Badge and to be featured in the Streamer Hub. (You can update
-            this later.)
-          </span>
-        </label>
-      </div>
-    </section>
-  );
-}
-
-/* ────────────────────── STEP 4: TEAM TYPE ────────────────────── */
-
-function StepTeamType({ data, set }) {
-  const options = [
-    {
-      key: "solo",
-      title: "Solo Player",
-      sub: "I'm flying in alone — match me with a team.",
-      icon: User,
-    },
-    {
-      key: "partial",
-      title: "Partial Team (2–5)",
-      sub: "We've got a stack but need fills to hit 6.",
-      icon: Users,
-    },
-    {
-      key: "full",
-      title: "Full Team of 6",
-      sub: "We're locked, loaded, and rolling deep.",
-      icon: Crown,
-    },
-  ];
-  return (
-    <section>
-      <Ribbon text="STEP 4 OF 7" />
-      <h2 className="font-display text-3xl sm:text-4xl mt-3 mb-2">How are you rolling?</h2>
-      <p className="font-body text-[#c8c2b3] mb-8">
-        This determines what extra agreements you'll need to sign and whether
-        you submit a team name.
-      </p>
-      <div className="grid grid-cols-1 gap-4">
-        {options.map((o) => {
-          const Icon = o.icon;
-          const active = data.teamType === o.key;
-          return (
-            <button
-              key={o.key}
-              onClick={() => set({ teamType: o.key })}
-              className={`text-left p-5 border-2 transition-all flex items-start gap-4 ${
-                active
-                  ? "border-yellow-400 bg-yellow-400/10"
-                  : "border-[#f5f1e8]/15 bg-[#131a2a] hover:border-yellow-400/50"
-              }`}
-            >
-              <div
-                className={`flex-shrink-0 p-2.5 ${
-                  active ? "bg-yellow-400 text-black" : "bg-[#0a0e1a] text-[#c8c2b3]"
-                }`}
-              >
-                <Icon className="w-6 h-6" />
-              </div>
-              <div className="flex-1">
-                <div className="font-display text-xl mb-0.5">{o.title}</div>
-                <div className="font-body text-sm text-[#c8c2b3]">{o.sub}</div>
-              </div>
-              <div
-                className={`w-5 h-5 border-2 flex-shrink-0 mt-1 flex items-center justify-center ${
-                  active ? "bg-yellow-400 border-yellow-400" : "border-[#f5f1e8]/40"
-                }`}
-              >
-                {active && <Check className="w-3.5 h-3.5 text-black" strokeWidth={4} />}
-              </div>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Partial-team size picker — only shows when "Partial" is selected */}
-      {data.teamType === "partial" && (
-        <div className="mt-6 border-2 border-yellow-400/50 bg-yellow-400/5 p-5 slide-up">
-          <Field
-            as="div"
-            label="How many in your stack?"
-            required
-            hint="2 to 5 players"
-          >
-            <div className="flex flex-wrap gap-2 mt-1">
-              {[2, 3, 4, 5].map((n) => {
-                const active = Number(data.partialMemberCount) === n;
-                return (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => set({ partialMemberCount: n })}
-                    className={`font-display text-lg w-14 h-14 border-2 transition-colors ${
-                      active
-                        ? "bg-yellow-400 border-yellow-400 text-black"
-                        : "bg-transparent border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400/60"
-                    }`}
-                  >
-                    {n}
-                  </button>
-                );
-              })}
-            </div>
-          </Field>
-        </div>
-      )}
-
-      {/* Live fee preview */}
-      {data.teamType && (data.teamType !== "partial" || data.partialMemberCount) && (
-        <div className="mt-6 flex items-center justify-between border-l-4 border-yellow-400 bg-[#131a2a] px-5 py-4">
-          <div>
-            <div className="font-mono text-[10px] text-[#c8c2b3] tracking-widest mb-0.5">
-              ENTRY FEE PREVIEW
-            </div>
-            <div className="font-body text-sm text-[#f5f1e8]">
-              {computeFee(data).seats} {computeFee(data).seats === 1 ? "player" : "players"} × ${PER_MEMBER_FEE_USD}
-            </div>
-          </div>
-          <div className="font-display text-2xl text-yellow-400">
-            ${computeFee(data).total}
-          </div>
-        </div>
-      )}
-    </section>
-  );
-}
-
-/* ────────────────────── STEP 5 (full team): CAPTAIN ────────────────────── */
-
-function StepCaptain({ data, set }) {
-  return (
-    <section>
-      <Ribbon text="STEP 5 OF 7 · TEAM CAPTAIN" />
-      <h2 className="font-display text-3xl sm:text-4xl mt-3 mb-2">
-        You're the captain now.
-      </h2>
-      <p className="font-body text-[#c8c2b3] mb-8">
-        Full teams need a designated point of contact. That's you. Read the
-        responsibility statement carefully — captains are the first line for any
-        team conduct issues.
-      </p>
-
-      <div className="border-2 border-yellow-400/40 bg-[#131a2a] p-6 mb-6">
-        <div className="flex items-start gap-3">
-          <ShieldCheck className="w-6 h-6 text-yellow-400 flex-shrink-0 mt-0.5" />
-          <div>
-            <h3 className="font-display text-lg mb-2">Captain Responsibility</h3>
-            <p className="font-body text-sm text-[#c8c2b3] leading-relaxed mb-3">
-              As Team Captain you are the primary point of contact between your
-              roster and Tournament Organizers. You will be held responsible{" "}
-              <span className="text-yellow-300">first</span> for any disruptive,
-              behavioral, or rules-violation issues originating from your team.
-              This includes communicating with mods, ensuring your roster checks in
-              on time, and reporting unsportsmanlike conduct per the Casual TOS.
-            </p>
-            <label className="flex items-start gap-3 cursor-pointer group mt-3">
-              <input
-                type="checkbox"
-                checked={data.confirmedCaptain}
-                onChange={(e) => set({ confirmedCaptain: e.target.checked })}
-                className="mt-1 w-5 h-5 accent-yellow-400 cursor-pointer"
-              />
-              <span className="font-body text-sm text-[#f5f1e8]">
-                I confirm I am the Team Captain for this roster.
-              </span>
-            </label>
-            <label className="flex items-start gap-3 cursor-pointer group mt-2">
-              <input
-                type="checkbox"
-                checked={data.acknowledgedCaptainResponsibility}
-                onChange={(e) =>
-                  set({ acknowledgedCaptainResponsibility: e.target.checked })
-                }
-                className="mt-1 w-5 h-5 accent-yellow-400 cursor-pointer"
-              />
-              <span className="font-body text-sm text-[#f5f1e8]">
-                I acknowledge that I am held responsible first for any disruptive
-                or behavioral issues within my team.
-              </span>
-            </label>
-          </div>
-        </div>
-      </div>
-
-      <Field label="Team Name" required hint="2 characters minimum">
-        <input
-          type="text"
-          value={data.teamName}
-          onChange={(e) => set({ teamName: e.target.value })}
-          placeholder="e.g. Nova Praetors"
-          className={inputClass}
-          maxLength={48}
-        />
-      </Field>
-
-      <div className="mt-4 border-l-4 border-yellow-400 bg-yellow-400/5 p-4">
-        <div className="flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
-          <p className="font-body text-xs text-[#c8c2b3] leading-relaxed">
-            <strong className="text-yellow-300">Heads up:</strong> All team names
-            are reviewed by Tournament Organizers. If your name doesn't meet the
-            event's name regulations, we'll reach out to you directly to request a
-            change before brackets are seeded.
-          </p>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ────────────────────── TOS COMPONENT ────────────────────── */
-
-function StepTOS({ tos, agreed, onChange, ribbon, heading, subhead }) {
-  return (
-    <section>
-      <Ribbon text={ribbon} />
-      <h2 className="font-display text-3xl sm:text-4xl mt-3 mb-2">{heading}</h2>
-      <p className="font-body text-[#c8c2b3] mb-6">{subhead}</p>
-
-      <div className="border-2 border-[#f5f1e8]/15 bg-[#131a2a] p-6 mb-5">
-        <div className="flex items-center justify-between mb-4 pb-3 border-b border-[#f5f1e8]/10">
-          <h3 className="font-display text-lg">{tos.title}</h3>
-          <span className="font-mono text-[10px] text-yellow-400 bg-black/40 px-2 py-1">
-            {tos.version}
-          </span>
-        </div>
-        <ul className="space-y-3">
-          {tos.bullets.map((b, i) => (
-            <li key={i} className="flex items-start gap-3 font-body text-sm text-[#c8c2b3] leading-relaxed">
-              <span className="font-mono text-yellow-400 text-xs mt-0.5">
-                {String(i + 1).padStart(2, "0")}
-              </span>
-              <span>{b}</span>
-            </li>
-          ))}
-        </ul>
-        <p className="font-mono text-[10px] text-[#6b7280] mt-5 pt-3 border-t border-[#f5f1e8]/10">
-          Summary above is for screen readability. The full PDF is the authoritative document.
-        </p>
-      </div>
-
-      <label className="flex items-start gap-3 cursor-pointer group p-4 border-2 border-dashed border-yellow-400/40 hover:border-yellow-400 transition-colors">
-        <input
-          type="checkbox"
-          checked={agreed}
-          onChange={(e) => onChange(e.target.checked)}
-          className="mt-1 w-5 h-5 accent-yellow-400 cursor-pointer flex-shrink-0"
-        />
-        <span className="font-body text-sm text-[#f5f1e8]">
-          I have read and agree to the{" "}
-          <strong className="text-yellow-300">{tos.title}</strong>.
-        </span>
-      </label>
-    </section>
-  );
-}
-
-/* ────────────────────── STEP 7: PAYMENT ────────────────────── */
-
-function StepPayment({ data, authToken, onSuccess }) {
-  const [status, setStatus] = useState("idle"); // idle | paying | submitting | success | error
-  const [errorMsg, setErrorMsg] = useState("");
-  const [turnstileToken, setTurnstileToken] = useState(null);
-  const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
-  const paypalClientId = import.meta.env.VITE_PAYPAL_CLIENT_ID;
-  const paypalEnv = import.meta.env.VITE_PAYPAL_ENV || "sandbox";
-  const isFullTeam = data.teamType === "full";
-  const fee = computeFee(data);
-
-  // Load Cloudflare Turnstile script and render the widget.
-  useEffect(() => {
-    if (!turnstileSiteKey) return;
-    const scriptId = "cf-turnstile-script";
-    const renderWidget = () => {
-      if (window.turnstile) {
-        window.turnstile.render("#cf-turnstile-container", {
-          sitekey: turnstileSiteKey,
-          theme: "dark",
-          callback: (token) => setTurnstileToken(token),
-          "error-callback": () => setTurnstileToken(null),
-          "expired-callback": () => setTurnstileToken(null),
-        });
-      }
-    };
-    if (document.getElementById(scriptId)) {
-      renderWidget();
-      return;
-    }
-    const s = document.createElement("script");
-    s.id = scriptId;
-    s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js";
-    s.async = true;
-    s.defer = true;
-    s.onload = renderWidget;
-    document.head.appendChild(s);
-  }, [turnstileSiteKey]);
-
-  /**
-   * PayPal Buttons callbacks:
-   *   createOrder  → ask our server to create a PayPal order with the right $
-   *   onApprove    → user authorized; ask our server to capture the payment,
-   *                  then submit the registration to /api/submit
-   *   onCancel     → user closed the PayPal popup
-   *   onError      → SDK or network error
-   */
-
-  const createOrder = async () => {
-    setErrorMsg("");
-    if (!turnstileToken) {
-      setErrorMsg("Please complete the security check first.");
-      throw new Error("Turnstile not completed");
-    }
-    if (!authToken) {
-      setErrorMsg("Discord session expired. Please sign in again.");
-      throw new Error("No auth token");
-    }
-    setStatus("paying");
-    const res = await fetch("/api/paypal/create-order", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        authToken,
-        teamType: data.teamType,
-        partialMemberCount: data.partialMemberCount,
-      }),
-    });
-    const result = await res.json();
-    if (!result.ok) {
-      setStatus("error");
-      setErrorMsg(result.error || "Could not start PayPal checkout.");
-      throw new Error(result.error || "create-order failed");
-    }
-    return result.orderId;
-  };
-
-  const onApprove = async (paypalData) => {
-    setStatus("submitting");
-    try {
-      // Step 1 — capture the payment server-side
-      const captureRes = await fetch("/api/paypal/capture-order", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          authToken,
-          orderId: paypalData.orderID,
-        }),
-      });
-      const captureResult = await captureRes.json();
-      if (!captureResult.ok) {
-        setStatus("error");
-        setErrorMsg(captureResult.error || "Could not capture payment.");
-        return;
-      }
-
-      // Step 2 — submit the registration with payment proof
-      const submitRes = await fetch("/api/submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...data,
-          authToken,
-          turnstileToken,
-          paypalOrderId: paypalData.orderID,
-          submittedAt: new Date().toISOString(),
-        }),
-      });
-      const submitResult = await submitRes.json();
-      if (!submitResult.ok) {
-        // Payment went through but registration didn't save — flag clearly
-        setStatus("error");
-        setErrorMsg(
-          (submitResult.error || "Registration failed") +
-            ". Your payment was captured (Order " +
-            paypalData.orderID +
-            ") — please contact a Tournament Organizer with this ID for help."
-        );
-        return;
-      }
-
-      setStatus("success");
-      setTimeout(onSuccess, 1500);
-    } catch (err) {
-      console.error("onApprove error:", err);
-      setStatus("error");
-      setErrorMsg(
-        "Network error after payment. If you were charged, contact a Tournament Organizer with PayPal Order ID: " +
-          paypalData.orderID
-      );
-    }
-  };
-
-  const onCancel = () => {
-    setStatus("idle");
-    setErrorMsg("Checkout cancelled. You can retry whenever you're ready.");
-  };
-
-  const onError = (err) => {
-    console.error("PayPal SDK error:", err);
-    setStatus("error");
-    setErrorMsg("PayPal couldn't load. Please refresh and try again.");
-  };
-
-  return (
-    <section>
-      <Ribbon text="STEP 7 OF 7 · PAYMENT" />
-      <h2 className="font-display text-3xl sm:text-4xl mt-3 mb-2">Entry Fee</h2>
-      <p className="font-body text-[#c8c2b3] mb-8">
-        Secure checkout via PayPal. Refund eligibility follows the Tournament TOS
-        you just agreed to.
-      </p>
-
-      <div className="border-2 border-yellow-400 bg-[#131a2a] p-6 mb-6">
-        <div className="flex items-center justify-between mb-4 pb-4 border-b border-[#f5f1e8]/10">
-          <div>
-            <div className="font-mono text-xs text-[#c8c2b3] mb-1">REGISTRATION TYPE</div>
-            <div className="font-display text-xl">
-              {data.teamType === "solo" && "Solo Player"}
-              {data.teamType === "partial" &&
-                `Partial Team — ${data.partialMemberCount} player${
-                  Number(data.partialMemberCount) === 1 ? "" : "s"
-                }`}
-              {data.teamType === "full" && `Full Team — ${data.teamName}`}
-            </div>
-          </div>
-          <div className="text-right">
-            <div className="font-mono text-xs text-[#c8c2b3] mb-1">TOTAL</div>
-            <div className="font-display text-3xl text-yellow-400">
-              ${fee.total}
-            </div>
-          </div>
-        </div>
-
-        {/* Fee breakdown */}
-        <div className="mb-4 pb-4 border-b border-[#f5f1e8]/10 flex justify-between items-baseline font-mono text-xs">
-          <span className="text-[#c8c2b3]">
-            {fee.seats}{" "}
-            {fee.seats === 1 ? "player" : "players"} × ${PER_MEMBER_FEE_USD}
-          </span>
-          <span className="text-yellow-300">
-            = ${fee.total}
-          </span>
-        </div>
-
-        <div className="space-y-2 font-body text-sm text-[#c8c2b3]">
-          <Row k="Player" v={data.fullName} />
-          <Row k="Discord" v={data.discordName} />
-          <Row k="IGN" v={data.ign} />
-          <Row k="Rank" v={data.rank} />
-          <Row k="Servers" v={data.servers.join(", ")} />
-        </div>
-      </div>
-
-      {/* Cloudflare Turnstile widget */}
-      <div className="mb-5 flex justify-center">
-        <div id="cf-turnstile-container" />
-      </div>
-      {!turnstileSiteKey && (
-        <p className="font-mono text-[10px] text-[#fbbf24] text-center mb-3">
-          ⚠️ VITE_TURNSTILE_SITE_KEY not configured
-        </p>
-      )}
-
-      {errorMsg && (
-        <div className="mb-4 border-l-4 border-red-500 bg-red-500/10 p-3 font-body text-sm text-red-300">
-          {errorMsg}
-        </div>
-      )}
-
-      {/* Status indicators above the PayPal button */}
-      {status === "submitting" && (
-        <div className="mb-4 border-l-4 border-yellow-400 bg-yellow-400/5 p-3 font-body text-sm text-yellow-200 flex items-center gap-2">
-          <Lock className="w-4 h-4 animate-pulse" />
-          Recording your registration…
-        </div>
-      )}
-      {status === "success" && (
-        <div className="mb-4 border-l-4 border-green-400 bg-green-400/10 p-3 font-body text-sm text-green-300 flex items-center gap-2">
-          <Check className="w-4 h-4" strokeWidth={3} />
-          Payment captured · Registration complete
-        </div>
-      )}
-
-      {/* PayPal Buttons — only render when ready and not in a finalizing state */}
-      {paypalClientId && status !== "submitting" && status !== "success" && (
-        <div className={!turnstileToken ? "opacity-40 pointer-events-none" : ""}>
-          <PayPalScriptProvider
-            options={{
-              clientId: paypalClientId,
-              currency: "USD",
-              intent: "capture",
-              "enable-funding": "venmo,card",
-              environment: paypalEnv === "live" ? "production" : "sandbox",
-            }}
-          >
-            <PayPalButtons
-              style={{
-                layout: "vertical",
-                shape: "rect",
-                color: "gold",
-                label: "pay",
-                height: 48,
-              }}
-              disabled={!turnstileToken || status === "paying"}
-              forceReRender={[fee.total, turnstileToken]}
-              createOrder={createOrder}
-              onApprove={onApprove}
-              onCancel={onCancel}
-              onError={onError}
-            />
-          </PayPalScriptProvider>
-        </div>
-      )}
-
-      {!paypalClientId && (
-        <div className="border-2 border-dashed border-yellow-400/60 bg-yellow-400/5 p-4 text-center">
-          <p className="font-mono text-xs text-yellow-200">
-            ⚠️ VITE_PAYPAL_CLIENT_ID is not set. Add your PayPal Sandbox client
-            ID to Vercel env vars to enable checkout.
-          </p>
-        </div>
-      )}
-
-      {!turnstileToken && paypalClientId && (
-        <p className="font-mono text-[10px] text-[#fbbf24] text-center mt-3">
-          Complete the security check above to enable payment
-        </p>
-      )}
-
-      <p className="font-mono text-[10px] text-[#6b7280] mt-6 text-center">
-        🔒 Payments processed securely via PayPal. We never see your card details.
-        {paypalEnv === "sandbox" && (
-          <> · <span className="text-yellow-300">SANDBOX MODE — no real money</span></>
-        )}
-      </p>
-    </section>
-  );
-}
-
-function Row({ k, v }) {
-  return (
-    <div className="flex justify-between gap-4">
-      <span className="text-[#6b7280] font-mono text-xs uppercase tracking-wider">{k}</span>
-      <span className="text-right truncate">{v || "—"}</span>
-    </div>
-  );
-}
-
-/* ────────────────────── SHARED PRIMITIVES ────────────────────── */
-
-const inputClass =
-  "w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2.5 font-body text-sm focus:outline-none focus:border-yellow-400 transition-colors placeholder:text-[#6b7280]";
-
-function Field({ label, required, hint, children, as: Wrapper = "label" }) {
-  return (
-    <Wrapper className="block">
-      <div className="flex items-baseline justify-between mb-1.5">
-        <span className="font-mono text-[11px] text-[#c8c2b3] tracking-widest uppercase">
-          {label}
-          {required && <span className="text-yellow-400 ml-1">*</span>}
-        </span>
-        {hint && <span className="font-mono text-[10px] text-[#6b7280]">{hint}</span>}
-      </div>
-      {children}
-    </Wrapper>
-  );
-}
-
-function Ribbon({ text }) {
-  return (
-    <div className="inline-block bg-yellow-400 text-black font-mono text-[11px] tracking-widest px-3 py-1">
-      {text}
-    </div>
-  );
-}
-
-function SubmissionToast({ data, onDismiss }) {
-  useEffect(() => {
-    const t = setTimeout(onDismiss, 6500);
-    return () => clearTimeout(t);
-  }, [onDismiss]);
-  return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 max-w-md w-[92%] slide-up">
-      <div className="bg-yellow-400 text-black border-2 border-black p-4 shadow-[6px_6px_0_0_#ef4444]">
-        <div className="flex items-start gap-3">
-          <Check className="w-5 h-5 flex-shrink-0 mt-0.5" strokeWidth={3} />
-          <div className="font-body text-sm">
-            <div className="font-display text-base mb-1">YOU'RE IN.</div>
-            <div>
-              {data.fullName}, your registration was received. Check your Discord
-              DMs from a Tournament Mod within 24 hours.
-            </div>
+            <Hammer className="w-5 h-5 text-black" strokeWidth={3} />
           </div>
         </div>
       </div>
