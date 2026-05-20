@@ -22,6 +22,9 @@ import {
   ExternalLink,
   UserCheck,
   UserX,
+  Handshake,
+  Pencil,
+  Mail,
 } from "lucide-react";
 
 /**
@@ -320,6 +323,12 @@ function ModDashboard({ authToken, identity, modInfo }) {
         >
           STREAMER HUB
         </TabButton>
+        <TabButton
+          active={activeTab === "sponsors"}
+          onClick={() => setActiveTab("sponsors")}
+        >
+          SPONSORS
+        </TabButton>
       </div>
 
       {activeTab === "bracket" && (
@@ -367,6 +376,10 @@ function ModDashboard({ authToken, identity, modInfo }) {
 
       {activeTab === "streamers" && (
         <StreamerHubAdmin authToken={authToken} identity={identity} />
+      )}
+
+      {activeTab === "sponsors" && (
+        <SponsorsAdmin authToken={authToken} identity={identity} />
       )}
     </section>
   );
@@ -1997,6 +2010,653 @@ function AddClipModal({ authToken, streamers, onClose, onSuccess }) {
 }
 
 /* ──────────────────────────── END STREAMER HUB ADMIN ──────────────────────────── */
+
+/* ──────────────────────────── SPONSORS ADMIN ──────────────────────────── */
+
+function SponsorsAdmin({ authToken, identity }) {
+  const [sponsors, setSponsors] = useState(null);
+  const [inquiries, setInquiries] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [busyId, setBusyId] = useState("");
+  const [editModal, setEditModal] = useState(null); // null | {sponsor} | {sponsor: null} for new
+  const [subTab, setSubTab] = useState("sponsors"); // "sponsors" | "inquiries"
+
+  const fetchAll = useCallback(async () => {
+    setError(null);
+    try {
+      const [sRes, iRes] = await Promise.all([
+        fetch("/api/admin/sponsors/list", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ authToken }),
+        }),
+        fetch("/api/admin/sponsors/inquiries", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ authToken }),
+        }),
+      ]);
+      const sData = await sRes.json();
+      const iData = await iRes.json();
+      if (!sData.ok) {
+        setError(String(sData.error || "Could not load sponsors."));
+        setLoading(false);
+        return;
+      }
+      setSponsors(Array.isArray(sData.sponsors) ? sData.sponsors : []);
+      setInquiries(
+        iData.ok && Array.isArray(iData.inquiries) ? iData.inquiries : []
+      );
+      setLoading(false);
+    } catch (err) {
+      setError("Network error.");
+      setLoading(false);
+    }
+  }, [authToken]);
+
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
+
+  const handleSponsorOp = async (id, op) => {
+    setBusyId(String(id) + op);
+    try {
+      const res = await fetch("/api/admin/sponsors/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ authToken, id, op }),
+      });
+      const result = await res.json();
+      if (!result.ok) setError(String(result.error || "Action failed."));
+      await fetchAll();
+    } catch (err) {
+      setError("Network error.");
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const handleInquiryStatus = async (id, status) => {
+    setBusyId(String(id) + status);
+    try {
+      const res = await fetch("/api/admin/sponsors/inquiry-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ authToken, id, status }),
+      });
+      const result = await res.json();
+      if (!result.ok) setError(String(result.error || "Action failed."));
+      await fetchAll();
+    } catch (err) {
+      setError("Network error.");
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="font-mono text-sm text-[#c8c2b3] animate-pulse">
+        Loading sponsors…
+      </div>
+    );
+  }
+
+  if (error && !sponsors) {
+    return (
+      <div className="border-l-4 border-red-500 bg-red-500/10 p-4 max-w-xl">
+        <div className="font-display text-lg mb-1">Couldn't load sponsors</div>
+        <p className="font-body text-sm text-red-300 mb-4">{String(error)}</p>
+        <button
+          onClick={fetchAll}
+          className="font-mono text-xs px-3 py-2 border border-red-300 text-red-300 hover:bg-red-500/20"
+        >
+          RETRY
+        </button>
+      </div>
+    );
+  }
+
+  const newInquiryCount = inquiries
+    ? inquiries.filter((i) => i.status === "new").length
+    : 0;
+
+  return (
+    <div>
+      {/* Sub-tab toggle */}
+      <div className="flex items-center gap-2 mb-6">
+        <button
+          onClick={() => setSubTab("sponsors")}
+          className={`font-mono text-[11px] tracking-widest px-3 py-1.5 border ${
+            subTab === "sponsors"
+              ? "bg-yellow-400 text-black border-yellow-400"
+              : "border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400"
+          }`}
+        >
+          SPONSORS ({sponsors ? sponsors.length : 0})
+        </button>
+        <button
+          onClick={() => setSubTab("inquiries")}
+          className={`font-mono text-[11px] tracking-widest px-3 py-1.5 border flex items-center gap-1.5 ${
+            subTab === "inquiries"
+              ? "bg-yellow-400 text-black border-yellow-400"
+              : "border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400"
+          }`}
+        >
+          <Mail className="w-3 h-3" />
+          INQUIRIES ({inquiries ? inquiries.length : 0})
+          {newInquiryCount > 0 && (
+            <span className="ml-1 px-1.5 bg-red-500 text-white rounded-full text-[9px]">
+              {newInquiryCount} new
+            </span>
+          )}
+        </button>
+        <button
+          onClick={fetchAll}
+          className="font-mono text-[11px] tracking-wider px-3 py-1.5 border border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400 flex items-center gap-1.5 ml-auto"
+        >
+          <RefreshCw className="w-3 h-3" /> REFRESH
+        </button>
+      </div>
+
+      {error && (
+        <div className="border-l-4 border-red-500 bg-red-500/10 p-3 mb-4 font-mono text-xs text-red-300 max-w-xl">
+          {String(error)}
+        </div>
+      )}
+
+      {/* SPONSORS SUB-TAB */}
+      {subTab === "sponsors" && (
+        <div>
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+            <div className="font-display text-2xl text-[#f5f1e8]">
+              Sponsor Directory
+            </div>
+            <button
+              onClick={() => setEditModal({ sponsor: null })}
+              className="font-mono text-xs tracking-wider px-3 py-2 border border-yellow-400 text-yellow-400 hover:bg-yellow-400 hover:text-black flex items-center gap-1.5"
+            >
+              <Plus className="w-3 h-3" /> ADD SPONSOR
+            </button>
+          </div>
+
+          {sponsors && sponsors.length === 0 ? (
+            <div className="font-body text-sm text-[#c8c2b3] italic">
+              No sponsors yet. Click ADD SPONSOR to create the first one.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {sponsors &&
+                sponsors.map((s) => (
+                  <SponsorAdminRow
+                    key={String(s.id)}
+                    sponsor={s}
+                    busy={busyId.startsWith(String(s.id))}
+                    onEdit={() => setEditModal({ sponsor: s })}
+                    onToggleActive={() =>
+                      handleSponsorOp(s.id, "toggleActive")
+                    }
+                    onDelete={() => handleSponsorOp(s.id, "delete")}
+                  />
+                ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* INQUIRIES SUB-TAB */}
+      {subTab === "inquiries" && (
+        <div>
+          <div className="font-display text-2xl text-[#f5f1e8] mb-4">
+            Sponsor Inquiries
+          </div>
+          {inquiries && inquiries.length === 0 ? (
+            <div className="font-body text-sm text-[#c8c2b3] italic">
+              No inquiries yet.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {inquiries &&
+                inquiries.map((inq) => (
+                  <InquiryRow
+                    key={String(inq.id)}
+                    inquiry={inq}
+                    busy={busyId.startsWith(String(inq.id))}
+                    onSetStatus={(status) =>
+                      handleInquiryStatus(inq.id, status)
+                    }
+                  />
+                ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {editModal && (
+        <SponsorEditModal
+          authToken={authToken}
+          sponsor={editModal.sponsor}
+          onClose={() => setEditModal(null)}
+          onSuccess={() => {
+            setEditModal(null);
+            fetchAll();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function SponsorAdminRow({ sponsor, busy, onEdit, onToggleActive, onDelete }) {
+  const name = String(sponsor.name || "—");
+  const tier = String(sponsor.tier || "partner");
+  const active = !!sponsor.active;
+  const logoUrl = String(sponsor.logoUrl || "");
+
+  return (
+    <div
+      className={`border-2 ${
+        active ? "border-[#f5f1e8]/15" : "border-[#f5f1e8]/8 opacity-60"
+      } bg-[#131a2a] p-3`}
+    >
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          {logoUrl && (
+            <img
+              src={logoUrl}
+              alt=""
+              className="h-10 w-16 object-contain bg-[#0a0e1a]/60 border border-[#f5f1e8]/10 flex-shrink-0"
+              onError={(e) => {
+                e.currentTarget.style.display = "none";
+              }}
+            />
+          )}
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-display text-base text-[#f5f1e8] truncate">
+                {name}
+              </span>
+              <span
+                className={`font-mono text-[9px] tracking-widest px-1.5 py-0.5 border ${
+                  tier === "title"
+                    ? "bg-yellow-400/20 text-yellow-300 border-yellow-400/40"
+                    : "bg-[#f5f1e8]/5 text-[#c8c2b3] border-[#f5f1e8]/15"
+                }`}
+              >
+                {tier.toUpperCase()}
+              </span>
+              {!active && (
+                <span className="font-mono text-[9px] tracking-widest px-1.5 py-0.5 bg-red-400/10 text-red-300 border border-red-400/30">
+                  HIDDEN
+                </span>
+              )}
+            </div>
+            <div className="font-mono text-[10px] text-[#6b7280] mt-0.5">
+              order {sponsor.displayOrder}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={onEdit}
+            disabled={busy}
+            className="font-mono text-xs tracking-wider px-3 py-2 border-2 border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            <Pencil className="w-3 h-3" /> EDIT
+          </button>
+          <button
+            onClick={onToggleActive}
+            disabled={busy}
+            className={`font-mono text-xs tracking-wider px-3 py-2 border-2 disabled:opacity-50 ${
+              active
+                ? "border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400"
+                : "border-green-400 text-green-300 hover:bg-green-400 hover:text-black"
+            }`}
+          >
+            {busy ? "…" : active ? "HIDE" : "SHOW"}
+          </button>
+          <button
+            onClick={onDelete}
+            disabled={busy}
+            className="font-mono text-xs tracking-wider px-3 py-2 border-2 border-red-400/60 text-red-300 hover:bg-red-400 hover:text-black disabled:opacity-50"
+            title="Delete sponsor"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InquiryRow({ inquiry, busy, onSetStatus }) {
+  const [expanded, setExpanded] = useState(false);
+  const status = String(inquiry.status || "new");
+
+  const statusColor = {
+    new: "bg-red-500/20 text-red-300 border-red-400/40",
+    contacted: "bg-yellow-400/15 text-yellow-300 border-yellow-400/40",
+    won: "bg-green-400/15 text-green-300 border-green-400/40",
+    lost: "bg-[#f5f1e8]/5 text-[#6b7280] border-[#f5f1e8]/15",
+  }[status] || "bg-[#f5f1e8]/5 text-[#c8c2b3] border-[#f5f1e8]/15";
+
+  let dateStr = "";
+  try {
+    if (inquiry.timestamp) {
+      dateStr = new Date(inquiry.timestamp).toLocaleDateString();
+    }
+  } catch (e) {
+    dateStr = "";
+  }
+
+  return (
+    <div className="border-2 border-[#f5f1e8]/15 bg-[#131a2a] p-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <span className="font-display text-base text-[#f5f1e8]">
+              {String(inquiry.name || "—")}
+            </span>
+            <span
+              className={`font-mono text-[9px] tracking-widest px-1.5 py-0.5 border ${statusColor}`}
+            >
+              {status.toUpperCase()}
+            </span>
+            {dateStr && (
+              <span className="font-mono text-[10px] text-[#6b7280]">
+                {dateStr}
+              </span>
+            )}
+          </div>
+          <div className="font-mono text-[11px] text-[#c8c2b3]">
+            <a
+              href={`mailto:${String(inquiry.email)}`}
+              className="text-yellow-400 hover:text-yellow-300 underline"
+            >
+              {String(inquiry.email)}
+            </a>
+            {inquiry.company && (
+              <span> · {String(inquiry.company)}</span>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="font-mono text-[10px] text-[#c8c2b3] hover:text-yellow-400 px-2 py-1"
+        >
+          {expanded ? "▲ LESS" : "▼ MORE"}
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="mt-3 pt-3 border-t border-[#f5f1e8]/10">
+          <div className="grid grid-cols-2 gap-2 mb-3 font-mono text-[11px]">
+            <div>
+              <span className="text-[#6b7280]">Interest: </span>
+              <span className="text-[#f5f1e8]">
+                {String(inquiry.interest || "—")}
+              </span>
+            </div>
+            <div>
+              <span className="text-[#6b7280]">Budget: </span>
+              <span className="text-[#f5f1e8]">
+                {String(inquiry.budget || "—")}
+              </span>
+            </div>
+          </div>
+          {inquiry.message && (
+            <div className="mb-3">
+              <div className="font-mono text-[10px] text-[#6b7280] mb-1">
+                MESSAGE
+              </div>
+              <div className="font-body text-sm text-[#f5f1e8] bg-[#0a0e1a]/60 p-2 border border-[#f5f1e8]/10 whitespace-pre-wrap">
+                {String(inquiry.message)}
+              </div>
+            </div>
+          )}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-mono text-[10px] text-[#6b7280]">
+              SET STATUS:
+            </span>
+            {["new", "contacted", "won", "lost"].map((st) => (
+              <button
+                key={st}
+                onClick={() => onSetStatus(st)}
+                disabled={busy || status === st}
+                className={`font-mono text-[10px] tracking-wider px-2 py-1 border disabled:opacity-40 ${
+                  status === st
+                    ? "bg-yellow-400 text-black border-yellow-400"
+                    : "border-[#f5f1e8]/20 text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400"
+                }`}
+              >
+                {st.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SponsorEditModal({ authToken, sponsor, onClose, onSuccess }) {
+  const isEdit = !!sponsor;
+  const [name, setName] = useState(sponsor?.name || "");
+  const [tier, setTier] = useState(sponsor?.tier || "partner");
+  const [logoUrl, setLogoUrl] = useState(sponsor?.logoUrl || "");
+  const [websiteUrl, setWebsiteUrl] = useState(sponsor?.websiteUrl || "");
+  const [description, setDescription] = useState(sponsor?.description || "");
+  const [promoCode, setPromoCode] = useState(sponsor?.promoCode || "");
+  const [promoDetails, setPromoDetails] = useState(
+    sponsor?.promoDetails || ""
+  );
+  const [displayOrder, setDisplayOrder] = useState(
+    sponsor?.displayOrder ? String(sponsor.displayOrder) : "1"
+  );
+  const [active, setActive] = useState(
+    sponsor ? sponsor.active !== false : true
+  );
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const nameValid = name.trim().length >= 2;
+  const canSubmit = !submitting && nameValid;
+
+  const handleSubmit = async () => {
+    setError("");
+    setSubmitting(true);
+    try {
+      const payload = {
+        authToken,
+        name: name.trim(),
+        tier,
+        logoUrl: logoUrl.trim(),
+        websiteUrl: websiteUrl.trim(),
+        description: description.trim(),
+        promoCode: promoCode.trim(),
+        promoDetails: promoDetails.trim(),
+        displayOrder: Number(displayOrder) || 1,
+        active,
+      };
+      let res;
+      if (isEdit) {
+        res = await fetch("/api/admin/sponsors/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, id: sponsor.id, op: "edit" }),
+        });
+      } else {
+        res = await fetch("/api/admin/sponsors/add", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+      const result = await res.json();
+      if (!result.ok) {
+        setError(String(result.error || "Could not save sponsor."));
+        setSubmitting(false);
+        return;
+      }
+      if (typeof onSuccess === "function") onSuccess();
+    } catch (err) {
+      setError("Network error.");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <ModalShell
+      onClose={onClose}
+      title={isEdit ? `Edit · ${String(sponsor.name)}` : "Add Sponsor"}
+    >
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">
+            SPONSOR NAME *
+          </div>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={80}
+            className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400"
+          />
+        </div>
+        <div>
+          <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">TIER</div>
+          <select
+            value={tier}
+            onChange={(e) => setTier(e.target.value)}
+            className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400"
+          >
+            <option value="title">Title</option>
+            <option value="partner">Partner</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1 mt-3">
+        LOGO URL
+      </div>
+      <input
+        type="url"
+        value={logoUrl}
+        onChange={(e) => setLogoUrl(e.target.value)}
+        placeholder="https://i.imgur.com/example.png"
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400"
+      />
+      <div className="font-mono text-[10px] text-[#6b7280] mt-1">
+        Direct image URL (ends in .png/.jpg). Upload to imgur and copy the
+        image address.
+      </div>
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1 mt-3">
+        WEBSITE URL
+      </div>
+      <input
+        type="url"
+        value={websiteUrl}
+        onChange={(e) => setWebsiteUrl(e.target.value)}
+        placeholder="https://sponsor-website.com"
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400"
+      />
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1 mt-3">
+        DESCRIPTION
+      </div>
+      <textarea
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        rows={2}
+        maxLength={300}
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400 resize-y"
+      />
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+        <div>
+          <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">
+            PROMO CODE
+          </div>
+          <input
+            type="text"
+            value={promoCode}
+            onChange={(e) => setPromoCode(e.target.value)}
+            maxLength={40}
+            className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400"
+          />
+        </div>
+        <div>
+          <div className="font-mono text-[11px] text-[#c8c2b3] mb-1">
+            DISPLAY ORDER
+          </div>
+          <input
+            type="number"
+            value={displayOrder}
+            onChange={(e) => setDisplayOrder(e.target.value)}
+            min={1}
+            className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400"
+          />
+        </div>
+      </div>
+
+      <div className="font-mono text-[11px] text-[#c8c2b3] mb-1 mt-3">
+        PROMO DETAILS
+      </div>
+      <input
+        type="text"
+        value={promoDetails}
+        onChange={(e) => setPromoDetails(e.target.value)}
+        placeholder="e.g. 10% off your first order"
+        maxLength={120}
+        className="w-full bg-[#0a0e1a] border-2 border-[#f5f1e8]/15 text-[#f5f1e8] px-3 py-2 font-mono text-sm focus:outline-none focus:border-yellow-400"
+      />
+
+      <label className="flex items-center gap-2 cursor-pointer select-none mt-4">
+        <input
+          type="checkbox"
+          checked={active}
+          onChange={(e) => setActive(e.target.checked)}
+          className="accent-yellow-400"
+        />
+        <span className="text-sm text-[#f5f1e8]">
+          Active (visible on the public sponsors page)
+        </span>
+      </label>
+
+      {error && (
+        <div className="border-l-4 border-red-500 bg-red-500/10 p-3 font-mono text-xs text-red-300 mt-4">
+          {error}
+        </div>
+      )}
+
+      <div className="flex gap-2 justify-end mt-6">
+        <button
+          onClick={onClose}
+          disabled={submitting}
+          className="font-mono text-xs px-4 py-2 border border-[#c8c2b3] text-[#c8c2b3] hover:border-yellow-400 hover:text-yellow-400 disabled:opacity-50"
+        >
+          CANCEL
+        </button>
+        <button
+          onClick={handleSubmit}
+          disabled={!canSubmit}
+          className={`font-display px-5 py-2 border-2 transition-all ${
+            canSubmit
+              ? "bg-yellow-400 text-black border-yellow-400 hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_0_#ef4444]"
+              : "bg-transparent text-[#6b7280] border-[#6b7280] cursor-not-allowed"
+          }`}
+        >
+          {submitting ? "SAVING…" : isEdit ? "SAVE CHANGES" : "ADD SPONSOR"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+/* ──────────────────────────── END SPONSORS ADMIN ──────────────────────────── */
 
 /**
  * Parse the textarea input into a list of { teamId, teamName } objects.
