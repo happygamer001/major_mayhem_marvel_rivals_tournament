@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import SiteFooter from "./Footer.jsx";
 
 /**
  * /bracket — public read-only bracket view (rebuilt v2).
@@ -253,6 +254,7 @@ export default function BracketPage() {
           )}
         </main>
       </div>
+      <SiteFooter />
     </div>
   );
 }
