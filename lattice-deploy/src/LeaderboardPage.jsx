@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import SiteFooter from "./Footer.jsx";
 
 /**
  * /leaderboard — public team standings table.
@@ -408,6 +409,7 @@ export default function LeaderboardPage() {
           )}
         </main>
       </div>
+      <SiteFooter />
     </div>
   );
 }
