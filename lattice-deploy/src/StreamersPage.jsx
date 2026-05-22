@@ -295,7 +295,7 @@ export default function StreamersPage() {
         </main>
       </div>
 
-      <SiteFooter />
+      <SiteFooter mode="fixed" />
 
       {signupOpen && (
         <SignupModal
