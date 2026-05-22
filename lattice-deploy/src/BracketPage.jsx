@@ -254,7 +254,7 @@ export default function BracketPage() {
           )}
         </main>
       </div>
-      <SiteFooter />
+      <SiteFooter mode="fixed" />
     </div>
   );
 }
