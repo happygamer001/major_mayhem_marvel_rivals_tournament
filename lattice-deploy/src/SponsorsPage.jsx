@@ -207,7 +207,7 @@ export default function SponsorsPage() {
           <InquiryForm />
         </main>
       </div>
-      <SiteFooter />
+      <SiteFooter mode="fixed" />
     </div>
   );
 }
