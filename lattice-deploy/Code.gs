@@ -28,6 +28,8 @@ const BRACKET_SHEET = "Bracket";
 const MATCHES_SHEET = "Matches";
 const STREAMERS_SHEET = "Streamers";
 const CLIPS_SHEET = "Clips";
+const SPONSORS_SHEET = "Sponsors";
+const SPONSOR_INQUIRIES_SHEET = "SponsorInquiries";
 
 const REG_HEADERS = [
   "Timestamp",
@@ -117,6 +119,33 @@ const CLIPS_HEADERS = [
   "Added At"
 ];
 
+const SPONSORS_HEADERS = [
+  "Timestamp",
+  "Sponsor Name",
+  "Tier",
+  "Logo URL",
+  "Website URL",
+  "Description",
+  "Promo Code",
+  "Promo Details",
+  "Display Order",
+  "Active",
+  "Added By",
+  "Added At"
+];
+
+const SPONSOR_INQUIRIES_HEADERS = [
+  "Timestamp",
+  "Name",
+  "Email",
+  "Company",
+  "Sponsorship Interest",
+  "Budget Range",
+  "Message",
+  "Status",
+  "Notes"
+];
+
 const BYE_TEAM = { teamId: "__BYE__", teamName: "(BYE)" };
 
 /* ════════════════════ ENTRY POINTS ════════════════════ */
@@ -172,6 +201,14 @@ function doPost(e) {
       "Registration recorded: " + data.fullName + " / " + data.ign +
       " (Discord: " + data.discordUsername + ")"
     );
+
+    // Fire Discord notification (silently no-op if not configured)
+    try {
+      notifyDiscordRegistration(data);
+    } catch (notifyErr) {
+      Logger.log("Discord notify failed: " + notifyErr.toString());
+    }
+
     return jsonResponse({ ok: true, message: "Registration recorded." });
   } catch (err) {
     Logger.log("Error in doPost: " + err.toString());
@@ -265,6 +302,35 @@ function routeBracketAction(data) {
       return jsonResponse({ ok: true, streamers: getApprovedStreamers() });
     case "getClips":
       return jsonResponse({ ok: true, clips: getPublicClips() });
+    case "getSponsors":
+      return jsonResponse({ ok: true, sponsors: getSponsors() });
+    case "submitSponsorInquiry":
+      return jsonResponse(submitSponsorInquiry(data));
+    case "listAllSponsors":
+      if (!isFromTrustedBackend) {
+        return jsonResponse({ ok: false, error: "Unauthorized." });
+      }
+      return jsonResponse({ ok: true, sponsors: listAllSponsors() });
+    case "addSponsor":
+      if (!isFromTrustedBackend) {
+        return jsonResponse({ ok: false, error: "Unauthorized." });
+      }
+      return jsonResponse(addSponsor(data));
+    case "updateSponsor":
+      if (!isFromTrustedBackend) {
+        return jsonResponse({ ok: false, error: "Unauthorized." });
+      }
+      return jsonResponse(updateSponsor(data));
+    case "listSponsorInquiries":
+      if (!isFromTrustedBackend) {
+        return jsonResponse({ ok: false, error: "Unauthorized." });
+      }
+      return jsonResponse({ ok: true, inquiries: listSponsorInquiries() });
+    case "updateInquiryStatus":
+      if (!isFromTrustedBackend) {
+        return jsonResponse({ ok: false, error: "Unauthorized." });
+      }
+      return jsonResponse(updateInquiryStatus(data));
     case "getBracket":
       return jsonResponse({ ok: true, bracket: getBracket() });
     default:
@@ -508,6 +574,16 @@ function initBracket(seededTeams) {
     }
 
     const byeCount = validCount ? 16 - seededTeams.length : 0;
+
+    // Discord webhook
+    if (validCount) {
+      try {
+        notifyDiscordBracketInitialized(seededTeams.length);
+      } catch (notifyErr) {
+        Logger.log("Discord notify failed: " + notifyErr.toString());
+      }
+    }
+
     return {
       ok: true,
       message: validCount
@@ -842,6 +918,23 @@ function submitMatchResult(data) {
       action: "result_entered",
       notes: data.notes || ""
     });
+
+    // Discord webhook for the completed match
+    try {
+      notifyDiscordMatchResult({
+        match_id: data.matchId,
+        team_a_id: teamAId,
+        team_b_id: teamBId,
+        team_a_label: teamALabel,
+        team_b_label: teamBLabel,
+        team_a_score: hasScore ? aScore : "",
+        team_b_score: hasScore ? bScore : "",
+        winner_id: data.winnerId,
+        feeds_winner_to: row[colIndex("feeds_winner_to")]
+      });
+    } catch (notifyErr) {
+      Logger.log("Discord notify failed: " + notifyErr.toString());
+    }
 
     return {
       ok: true,
@@ -1207,6 +1300,26 @@ function setMatchStream(data) {
       notes: url || ""
     });
 
+    // Discord webhook — only post when the stream is going LIVE, not when
+    // clearing. Read the team labels from the row we just updated.
+    if (url) {
+      try {
+        const row = bracket
+          .getRange(rowNum, 1, 1, BRACKET_HEADERS.length)
+          .getValues()[0];
+        notifyDiscordMatchLive(
+          {
+            match_id: data.matchId,
+            team_a_label: row[colIndex("team_a_label")],
+            team_b_label: row[colIndex("team_b_label")]
+          },
+          url
+        );
+      } catch (notifyErr) {
+        Logger.log("Discord notify failed: " + notifyErr.toString());
+      }
+    }
+
     return {
       ok: true,
       message: url
@@ -1337,6 +1450,13 @@ function submitStreamerApplication(data) {
       "",
       data.notes || ""
     ]);
+
+    // Discord webhook
+    try {
+      notifyDiscordStreamerApplication(data);
+    } catch (notifyErr) {
+      Logger.log("Discord notify failed: " + notifyErr.toString());
+    }
 
     return {
       ok: true,
@@ -1646,6 +1766,372 @@ function listAllClips() {
   return getPublicClips();
 }
 
+/* ════════════════════ SPONSORS ════════════════════ */
+
+/**
+ * Returns all ACTIVE sponsors, sorted by tier then display order.
+ * Public — no auth. Used by the /sponsors page and the site footer.
+ */
+function getSponsors() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SPONSORS_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  const data = sheet.getDataRange().getValues();
+  const colIndex = function (name) {
+    return SPONSORS_HEADERS.indexOf(name);
+  };
+  const result = [];
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    if (!row[colIndex("Sponsor Name")]) continue;
+    // Only active sponsors are exposed publicly
+    if (String(row[colIndex("Active")]).toLowerCase() !== "yes") continue;
+    result.push({
+      name: String(row[colIndex("Sponsor Name")]),
+      tier: String(row[colIndex("Tier")] || "partner").toLowerCase(),
+      logoUrl: String(row[colIndex("Logo URL")] || ""),
+      websiteUrl: String(row[colIndex("Website URL")] || ""),
+      description: String(row[colIndex("Description")] || ""),
+      promoCode: String(row[colIndex("Promo Code")] || ""),
+      promoDetails: String(row[colIndex("Promo Details")] || ""),
+      displayOrder: Number(row[colIndex("Display Order")]) || 999
+    });
+  }
+  // Sort: title tier first, then partner; within tier by display order
+  const tierRank = function (tier) {
+    if (tier === "title") return 0;
+    return 1;
+  };
+  result.sort(function (a, b) {
+    const tr = tierRank(a.tier) - tierRank(b.tier);
+    if (tr !== 0) return tr;
+    return a.displayOrder - b.displayOrder;
+  });
+  return result;
+}
+
+/**
+ * Accepts a "Become a Sponsor" inquiry from the public /sponsors page.
+ * Writes a row to the SponsorInquiries tab and emails the tournament
+ * organizer. Turnstile-verified upstream by the Vercel endpoint, so we
+ * don't re-check the captcha here.
+ *
+ * Expected data shape:
+ *   {
+ *     action: "submitSponsorInquiry",
+ *     name: "...",
+ *     email: "...",
+ *     company: "...",
+ *     interest: "...",        // tier they're interested in
+ *     budget: "...",
+ *     message: "..."
+ *   }
+ */
+function submitSponsorInquiry(data) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const name = String(data.name || "").trim();
+    const email = String(data.email || "").trim();
+    if (!name || !email) {
+      return { ok: false, error: "Name and email are required." };
+    }
+    // Light email sanity check
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      return { ok: false, error: "Please provide a valid email address." };
+    }
+
+    const sheet = getOrCreateSheet(
+      SPONSOR_INQUIRIES_SHEET,
+      SPONSOR_INQUIRIES_HEADERS
+    );
+    sheet.appendRow([
+      new Date(),
+      name,
+      email,
+      String(data.company || ""),
+      String(data.interest || ""),
+      String(data.budget || ""),
+      String(data.message || ""),
+      "new",
+      ""
+    ]);
+
+    // Fire a notification email to the organizer. Wrapped in its own
+    // try/catch so an email failure never blocks the inquiry from saving.
+    try {
+      const recipient = "chicken@blueberrynetwork.org";
+      const subject = "New sponsor inquiry — Lattice Open";
+      const body =
+        "A new sponsorship inquiry just came in.\n\n" +
+        "Name: " + name + "\n" +
+        "Email: " + email + "\n" +
+        "Company: " + String(data.company || "(not given)") + "\n" +
+        "Interest: " + String(data.interest || "(not given)") + "\n" +
+        "Budget: " + String(data.budget || "(not given)") + "\n\n" +
+        "Message:\n" + String(data.message || "(no message)") + "\n\n" +
+        "—\nReview inquiries in the SponsorInquiries tab of the " +
+        "registration sheet.";
+      MailApp.sendEmail(recipient, subject, body);
+    } catch (mailErr) {
+      Logger.log("Sponsor inquiry email failed: " + mailErr.toString());
+    }
+
+    // Discord webhook (separate from email — fires regardless of email status)
+    try {
+      notifyDiscordSponsorInquiry(data);
+    } catch (notifyErr) {
+      Logger.log("Discord notify failed: " + notifyErr.toString());
+    }
+
+    return {
+      ok: true,
+      message: "Inquiry received. We'll be in touch soon."
+    };
+  } catch (err) {
+    Logger.log("submitSponsorInquiry error: " + err.toString());
+    return { ok: false, error: err.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* ════════════════════ SPONSORS — ADMIN ════════════════════ */
+
+/**
+ * Returns ALL sponsors (active and inactive), each tagged with its sheet
+ * row number as `id` so the admin UI can target specific rows for edits.
+ * Mod-gated upstream.
+ */
+function listAllSponsors() {
+  const sheet = getOrCreateSheet(SPONSORS_SHEET, SPONSORS_HEADERS);
+  if (sheet.getLastRow() < 2) return [];
+  const data = sheet.getDataRange().getValues();
+  const colIndex = function (name) {
+    return SPONSORS_HEADERS.indexOf(name);
+  };
+  const result = [];
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    if (!row[colIndex("Sponsor Name")]) continue;
+    result.push({
+      id: i + 1, // 1-based sheet row number
+      name: String(row[colIndex("Sponsor Name")]),
+      tier: String(row[colIndex("Tier")] || "partner").toLowerCase(),
+      logoUrl: String(row[colIndex("Logo URL")] || ""),
+      websiteUrl: String(row[colIndex("Website URL")] || ""),
+      description: String(row[colIndex("Description")] || ""),
+      promoCode: String(row[colIndex("Promo Code")] || ""),
+      promoDetails: String(row[colIndex("Promo Details")] || ""),
+      displayOrder: Number(row[colIndex("Display Order")]) || 999,
+      active: String(row[colIndex("Active")]).toLowerCase() === "yes"
+    });
+  }
+  return result;
+}
+
+/**
+ * Appends a new sponsor row.
+ *
+ * Expected data shape:
+ *   {
+ *     action: "addSponsor", adminSecret: "...",
+ *     name, tier, logoUrl, websiteUrl, description,
+ *     promoCode, promoDetails, displayOrder, active,
+ *     addedBy
+ *   }
+ */
+function addSponsor(data) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const name = String(data.name || "").trim();
+    if (!name) {
+      return { ok: false, error: "Sponsor name is required." };
+    }
+    const tier = String(data.tier || "partner").toLowerCase();
+    if (tier !== "title" && tier !== "partner") {
+      return { ok: false, error: "Tier must be 'title' or 'partner'." };
+    }
+    const sheet = getOrCreateSheet(SPONSORS_SHEET, SPONSORS_HEADERS);
+    sheet.appendRow([
+      new Date(),
+      name,
+      tier,
+      String(data.logoUrl || ""),
+      String(data.websiteUrl || ""),
+      String(data.description || ""),
+      String(data.promoCode || ""),
+      String(data.promoDetails || ""),
+      Number(data.displayOrder) || 1,
+      data.active === false ? "No" : "Yes",
+      String(data.addedBy || ""),
+      new Date()
+    ]);
+    return { ok: true, message: "Sponsor added." };
+  } catch (err) {
+    Logger.log("addSponsor error: " + err.toString());
+    return { ok: false, error: err.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Updates an existing sponsor row, or deletes it.
+ *
+ * Expected data shape:
+ *   {
+ *     action: "updateSponsor", adminSecret: "...",
+ *     id: <row number>,
+ *     op: "edit" | "delete" | "toggleActive",
+ *     // for "edit", also: name, tier, logoUrl, websiteUrl, description,
+ *     //                   promoCode, promoDetails, displayOrder, active
+ *   }
+ */
+function updateSponsor(data) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const rowNum = Number(data.id);
+    if (!rowNum || rowNum < 2) {
+      return { ok: false, error: "Valid sponsor id is required." };
+    }
+    const sheet = getOrCreateSheet(SPONSORS_SHEET, SPONSORS_HEADERS);
+    if (rowNum > sheet.getLastRow()) {
+      return { ok: false, error: "Sponsor not found." };
+    }
+    const colIndex = function (name) {
+      return SPONSORS_HEADERS.indexOf(name) + 1; // 1-based column
+    };
+    const op = String(data.op || "edit");
+
+    if (op === "delete") {
+      sheet.deleteRow(rowNum);
+      return { ok: true, message: "Sponsor deleted." };
+    }
+
+    if (op === "toggleActive") {
+      const cell = sheet.getRange(rowNum, colIndex("Active"));
+      const current = String(cell.getValue()).toLowerCase() === "yes";
+      cell.setValue(current ? "No" : "Yes");
+      return {
+        ok: true,
+        message: current ? "Sponsor hidden." : "Sponsor shown."
+      };
+    }
+
+    // op === "edit" — overwrite all editable fields
+    const name = String(data.name || "").trim();
+    if (!name) {
+      return { ok: false, error: "Sponsor name is required." };
+    }
+    const tier = String(data.tier || "partner").toLowerCase();
+    if (tier !== "title" && tier !== "partner") {
+      return { ok: false, error: "Tier must be 'title' or 'partner'." };
+    }
+    sheet.getRange(rowNum, colIndex("Sponsor Name")).setValue(name);
+    sheet.getRange(rowNum, colIndex("Tier")).setValue(tier);
+    sheet.getRange(rowNum, colIndex("Logo URL")).setValue(String(data.logoUrl || ""));
+    sheet.getRange(rowNum, colIndex("Website URL")).setValue(String(data.websiteUrl || ""));
+    sheet.getRange(rowNum, colIndex("Description")).setValue(String(data.description || ""));
+    sheet.getRange(rowNum, colIndex("Promo Code")).setValue(String(data.promoCode || ""));
+    sheet.getRange(rowNum, colIndex("Promo Details")).setValue(String(data.promoDetails || ""));
+    sheet.getRange(rowNum, colIndex("Display Order")).setValue(Number(data.displayOrder) || 1);
+    sheet.getRange(rowNum, colIndex("Active")).setValue(data.active === false ? "No" : "Yes");
+    return { ok: true, message: "Sponsor updated." };
+  } catch (err) {
+    Logger.log("updateSponsor error: " + err.toString());
+    return { ok: false, error: err.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Returns all sponsor inquiries, each tagged with its sheet row number
+ * as `id`. Newest first. Mod-gated upstream.
+ */
+function listSponsorInquiries() {
+  const sheet = getOrCreateSheet(
+    SPONSOR_INQUIRIES_SHEET,
+    SPONSOR_INQUIRIES_HEADERS
+  );
+  if (sheet.getLastRow() < 2) return [];
+  const data = sheet.getDataRange().getValues();
+  const colIndex = function (name) {
+    return SPONSOR_INQUIRIES_HEADERS.indexOf(name);
+  };
+  const result = [];
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    if (!row[colIndex("Email")]) continue;
+    const ts = row[colIndex("Timestamp")];
+    result.push({
+      id: i + 1,
+      timestamp:
+        ts instanceof Date ? ts.toISOString() : String(ts || ""),
+      name: String(row[colIndex("Name")] || ""),
+      email: String(row[colIndex("Email")] || ""),
+      company: String(row[colIndex("Company")] || ""),
+      interest: String(row[colIndex("Sponsorship Interest")] || ""),
+      budget: String(row[colIndex("Budget Range")] || ""),
+      message: String(row[colIndex("Message")] || ""),
+      status: String(row[colIndex("Status")] || "new").toLowerCase(),
+      notes: String(row[colIndex("Notes")] || "")
+    });
+  }
+  result.reverse(); // newest first
+  return result;
+}
+
+/**
+ * Updates an inquiry's status (and optionally notes).
+ *
+ * Expected data shape:
+ *   {
+ *     action: "updateInquiryStatus", adminSecret: "...",
+ *     id: <row number>,
+ *     status: "new" | "contacted" | "won" | "lost",
+ *     notes: "..."  // optional
+ *   }
+ */
+function updateInquiryStatus(data) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const rowNum = Number(data.id);
+    if (!rowNum || rowNum < 2) {
+      return { ok: false, error: "Valid inquiry id is required." };
+    }
+    const validStatuses = ["new", "contacted", "won", "lost"];
+    const status = String(data.status || "").toLowerCase();
+    if (validStatuses.indexOf(status) === -1) {
+      return { ok: false, error: "Invalid status." };
+    }
+    const sheet = getOrCreateSheet(
+      SPONSOR_INQUIRIES_SHEET,
+      SPONSOR_INQUIRIES_HEADERS
+    );
+    if (rowNum > sheet.getLastRow()) {
+      return { ok: false, error: "Inquiry not found." };
+    }
+    const colIndex = function (name) {
+      return SPONSOR_INQUIRIES_HEADERS.indexOf(name) + 1;
+    };
+    sheet.getRange(rowNum, colIndex("Status")).setValue(status);
+    if (typeof data.notes === "string") {
+      sheet.getRange(rowNum, colIndex("Notes")).setValue(data.notes);
+    }
+    return { ok: true, message: "Inquiry updated." };
+  } catch (err) {
+    Logger.log("updateInquiryStatus error: " + err.toString());
+    return { ok: false, error: err.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 
 function getOrCreateSheet(name, headers) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -1668,6 +2154,248 @@ function writeHeaders(sheet, headers) {
     .setFontColor("#000000");
   sheet.setFrozenRows(1);
   sheet.autoResizeColumns(1, headers.length);
+}
+
+/* ════════════════════ DISCORD WEBHOOKS ════════════════════ */
+
+/**
+ * Posts an "embed" message to one of our Discord webhook URLs.
+ *
+ * Configured via Script Properties:
+ *   DISCORD_MOD_WEBHOOK_URL     — channel where mods get notified
+ *   DISCORD_PUBLIC_WEBHOOK_URL  — public channel for fan updates
+ *   DISCORD_MOD_ROLE_ID         — role to ping in mod notifications (optional)
+ *
+ * If the relevant URL is missing, silently does nothing — registrations and
+ * other operations are NEVER broken by a missing or failing Discord webhook.
+ *
+ * @param {"mod"|"public"} channel  Which webhook to use
+ * @param {string} title            Embed title (e.g. "New Registration")
+ * @param {string} description      Embed body text
+ * @param {Array<{name:string,value:string,inline?:boolean}>} fields  Optional structured fields
+ * @param {number} color            Decimal color (0xfacc15 = yellow). Defaults to yellow.
+ * @param {boolean} pingMods        If true and channel="mod", prepends a role mention
+ */
+function postDiscordEmbed(channel, title, description, fields, color, pingMods) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const urlKey =
+      channel === "mod" ? "DISCORD_MOD_WEBHOOK_URL" : "DISCORD_PUBLIC_WEBHOOK_URL";
+    const webhookUrl = props.getProperty(urlKey);
+    if (!webhookUrl) {
+      // Silent skip — Discord integration is optional
+      return;
+    }
+
+    const embedColor = typeof color === "number" ? color : 0xfacc15; // yellow default
+    const safeFields = Array.isArray(fields) ? fields.slice(0, 25) : [];
+
+    // Optional role ping for mod-channel notifications
+    let content = "";
+    if (pingMods && channel === "mod") {
+      const roleId = props.getProperty("DISCORD_MOD_ROLE_ID");
+      if (roleId) {
+        content = "<@&" + roleId + ">";
+      }
+    }
+
+    const payload = {
+      content: content,
+      embeds: [
+        {
+          title: String(title || "").slice(0, 256),
+          description: String(description || "").slice(0, 4000),
+          color: embedColor,
+          fields: safeFields.map(function (f) {
+            return {
+              name: String(f.name || "").slice(0, 256),
+              value: String(f.value || "—").slice(0, 1024),
+              inline: !!f.inline
+            };
+          }),
+          timestamp: new Date().toISOString(),
+          footer: { text: "Lattice Open" }
+        }
+      ]
+    };
+    if (pingMods && content) {
+      // Only allow the mod role to be pinged — don't allow @everyone etc.
+      const roleId = props.getProperty("DISCORD_MOD_ROLE_ID");
+      if (roleId) {
+        payload.allowed_mentions = { roles: [roleId] };
+      }
+    }
+
+    UrlFetchApp.fetch(webhookUrl, {
+      method: "post",
+      contentType: "application/json",
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+  } catch (err) {
+    // Webhooks must NEVER break the actual operation.
+    Logger.log("Discord webhook failed: " + err.toString());
+  }
+}
+
+/**
+ * Convenience wrappers for the events we care about.
+ * Each wraps postDiscordEmbed with the right title/color/fields for that event.
+ */
+
+function notifyDiscordRegistration(data) {
+  const fields = [
+    { name: "Captain", value: String(data.discordUsername || "—"), inline: true },
+    { name: "Team Type", value: String(data.teamType || "—"), inline: true },
+    { name: "IGN", value: String(data.ign || "—"), inline: true },
+    { name: "Rank", value: String(data.rank || "—"), inline: true },
+    { name: "Servers", value: String(data.servers || "—"), inline: true },
+    { name: "Streamer?", value: data.isStreamer ? "Yes" : "No", inline: true }
+  ];
+  if (data.teamName) {
+    fields.push({ name: "Team Name", value: String(data.teamName), inline: false });
+  }
+  postDiscordEmbed(
+    "mod",
+    "🎮 New Tournament Registration",
+    String(data.fullName || "A new player") + " just registered.",
+    fields,
+    0x10b981, // green
+    true // ping mods
+  );
+}
+
+function notifyDiscordSponsorInquiry(data) {
+  const fields = [
+    { name: "Name", value: String(data.name || "—"), inline: true },
+    { name: "Email", value: String(data.email || "—"), inline: true },
+    { name: "Company", value: String(data.company || "—") || "(not given)", inline: true },
+    { name: "Interest", value: String(data.interest || "—"), inline: true },
+    { name: "Budget", value: String(data.budget || "—") || "(not given)", inline: true }
+  ];
+  if (data.message) {
+    fields.push({ name: "Message", value: String(data.message).slice(0, 1024), inline: false });
+  }
+  postDiscordEmbed(
+    "mod",
+    "💼 New Sponsor Inquiry",
+    "A potential sponsor just reached out.",
+    fields,
+    0xfacc15, // yellow
+    true // ping mods — inquiries are leads worth jumping on
+  );
+}
+
+function notifyDiscordStreamerApplication(data) {
+  const fields = [
+    { name: "Streamer", value: String(data.streamerName || "—"), inline: true },
+    { name: "Discord", value: "@" + String(data.discordUsername || "—"), inline: true },
+    { name: "Twitch", value: String(data.twitchUrl || "—"), inline: false },
+    { name: "Family Friendly", value: data.familyFriendly ? "Yes" : "No", inline: true }
+  ];
+  postDiscordEmbed(
+    "mod",
+    "📺 New Streamer Application",
+    "Awaiting mod approval — review at /admin → Streamer Hub.",
+    fields,
+    0xa855f7, // purple
+    true // ping mods
+  );
+}
+
+function notifyDiscordBracketInitialized(teamCount) {
+  postDiscordEmbed(
+    "public",
+    "⚡ Bracket Locked In",
+    "The Lattice Open bracket has been initialized with " +
+      String(teamCount) +
+      " teams. The tournament is about to begin!",
+    [],
+    0xfacc15,
+    false
+  );
+}
+
+function notifyDiscordMatchResult(match) {
+  if (!match || !match.winner_id) return;
+  const winnerLabel =
+    match.winner_id === match.team_a_id ? match.team_a_label : match.team_b_label;
+  const loserLabel =
+    match.winner_id === match.team_a_id ? match.team_b_label : match.team_a_label;
+
+  // Special-case the championship match — bigger announcement
+  if (match.feeds_winner_to === "CHAMPION") {
+    postDiscordEmbed(
+      "public",
+      "🏆 CHAMPION CROWNED",
+      "**" + String(winnerLabel) + "** has won the Lattice Open!",
+      [
+        {
+          name: "Final Match",
+          value:
+            String(winnerLabel) +
+            " def. " +
+            String(loserLabel) +
+            (match.team_a_score !== "" && match.team_b_score !== ""
+              ? "  (" +
+                String(match.team_a_score) +
+                "–" +
+                String(match.team_b_score) +
+                ")"
+              : ""),
+          inline: false
+        }
+      ],
+      0xef4444, // red — drama
+      false
+    );
+    return;
+  }
+
+  // Regular completed match
+  let scoreText = "";
+  if (
+    match.team_a_score !== "" &&
+    match.team_b_score !== "" &&
+    match.team_a_score !== null &&
+    match.team_b_score !== null
+  ) {
+    const wScore =
+      match.winner_id === match.team_a_id ? match.team_a_score : match.team_b_score;
+    const lScore =
+      match.winner_id === match.team_a_id ? match.team_b_score : match.team_a_score;
+    scoreText = " " + String(wScore) + "–" + String(lScore);
+  }
+  postDiscordEmbed(
+    "public",
+    "✅ Match Result · " + String(match.match_id),
+    "**" +
+      String(winnerLabel) +
+      "** def. " +
+      String(loserLabel) +
+      scoreText,
+    [],
+    0x10b981, // green
+    false
+  );
+}
+
+function notifyDiscordMatchLive(match, streamUrl) {
+  if (!match || !streamUrl) return;
+  postDiscordEmbed(
+    "public",
+    "🔴 LIVE NOW · " + String(match.match_id),
+    "**" +
+      String(match.team_a_label) +
+      "** vs **" +
+      String(match.team_b_label) +
+      "**\n\n[Watch the stream →](" +
+      String(streamUrl) +
+      ")",
+    [],
+    0xef4444, // red
+    false
+  );
 }
 
 function jsonResponse(obj) {
