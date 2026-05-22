@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Reserved space at the bottom of every page for the fixed ticker footer.
+     If the ticker height changes, update this value to match. */
+  --ticker-height: 52px;
+}
+
 html,
 body,
 #root {
@@ -14,4 +20,6 @@ body,
 body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Ensure no page content sits under the fixed ticker on any screen size. */
+  padding-bottom: var(--ticker-height);
 }
