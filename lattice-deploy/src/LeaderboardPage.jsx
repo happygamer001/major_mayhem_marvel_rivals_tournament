@@ -409,7 +409,7 @@ export default function LeaderboardPage() {
           )}
         </main>
       </div>
-      <SiteFooter />
+      <SiteFooter mode="fixed" />
     </div>
   );
 }
