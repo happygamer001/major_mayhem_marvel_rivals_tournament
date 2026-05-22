@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import SiteFooter from "./Footer.jsx";
 
 /**
  * /streamers — public Streamer Hub page.
@@ -293,6 +294,8 @@ export default function StreamersPage() {
           )}
         </main>
       </div>
+
+      <SiteFooter />
 
       {signupOpen && (
         <SignupModal
