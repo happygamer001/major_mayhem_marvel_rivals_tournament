@@ -269,7 +269,7 @@ export default function App() {
         )}
       </div>
 
-      {view === "landing" && <SiteFooter />}
+      <SiteFooter mode="fixed" />
 
       {submitted && (
         <SubmissionToast data={submitted} onDismiss={() => setSubmitted(null)} />
