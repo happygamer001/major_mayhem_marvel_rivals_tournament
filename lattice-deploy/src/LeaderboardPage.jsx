@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import SiteFooter from "./Footer.jsx";
+import AdminLink from "./AdminLink.jsx";
 
 /**
  * /leaderboard — public team standings table.
@@ -311,6 +312,8 @@ export default function LeaderboardPage() {
     <div className="font-body min-h-screen w-full bg-[#0a0e1a] text-[#f5f1e8] relative overflow-hidden">
       <style>{FONT_STYLES}</style>
       <div className="absolute inset-0 halftone pointer-events-none" />
+
+      <AdminLink />
 
       {/* Under-construction tape */}
       <div className="fixed top-0 right-0 z-50 pointer-events-none select-none">
