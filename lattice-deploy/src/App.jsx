@@ -28,6 +28,7 @@ import LeaderboardPage from "./LeaderboardPage.jsx";
 import StreamersPage from "./StreamersPage.jsx";
 import SponsorsPage from "./SponsorsPage.jsx";
 import SiteFooter from "./Footer.jsx";
+import AdminLink from "./AdminLink.jsx";
 
 /* ──────────────────────────────────────────────────────────────
    LATTICE OPEN TOURNAMENT — Major Mayhem
@@ -250,6 +251,7 @@ export default function App() {
       <div className="absolute inset-0 grain pointer-events-none" />
 
       <UnderConstructionTape />
+      <AdminLink />
 
       <div className="relative z-10">
         {view === "landing" && <Landing onPick={(v) => setView(v)} />}
